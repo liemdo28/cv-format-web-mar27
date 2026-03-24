@@ -4,3 +4,6 @@ dist/
 *.pyc
 __pycache__/
 output/
+client_secret.json
+get_refresh_token.py
+*.json
