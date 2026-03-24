@@ -24,7 +24,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_API_URL: ${{ vars.CF_PAGES ? 'https://cv-format.'${{ vars.CF_PAGES_DOMAIN }} : 'http://localhost:8000' }}
+          VITE_API_URL: ${{ vars.CF_API_URL || 'http://localhost:8000' }}
         run: cd frontend && npm run build
 
       - name: Deploy to Cloudflare Pages
@@ -34,7 +34,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: cv-format-tool
           directory: frontend/dist
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
   # ── Backend: Deploy to Render ────────────────────────────────
   backend:
