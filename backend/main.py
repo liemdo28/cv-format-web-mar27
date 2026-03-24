@@ -734,7 +734,7 @@ async def process_cv(
         safe_name = re.sub(r'\s+', '_', safe_name)
         output_dir = os.path.join(OUTPUT_DIR, download_id)
         os.makedirs(output_dir, exist_ok=True)
-        output_docx = os.path.join(output_dir, f"{safe_name}{suffix}")
+        output_docx = os.path.join(output_dir, f"{safe_name}.docx")  # always .docx
 
         # Fill template
         try:
@@ -758,13 +758,21 @@ async def process_cv(
             )
             if drive_download_url:
                 print(f"[GDrive] Uploaded: {safe_name}.docx -> {drive_download_url}")
+            else:
+                print(f"[GDrive] Upload FAILED for {safe_name}.docx — GDrive not configured or error")
+
+        if not drive_download_url:
+            return ProcessResponse(
+                status="error",
+                message="Google Drive upload failed — cannot generate download link. Please contact support."
+            )
 
         return ProcessResponse(
             status="success",
             message=f"Generated ({lang.upper()} template)",
             suggestedName=suggested_name,
             downloadId=download_id,
-            downloadUrl=drive_download_url or f"/download/{download_id}"
+            downloadUrl=drive_download_url
         )
 
     finally:
