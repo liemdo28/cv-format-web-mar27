@@ -273,10 +273,23 @@ export default function App() {
           msg = err.message
         }
 
+        // Extract provider error for display
+        const providerErrors = msg.split(' | ')
+        const shortMsgs = providerErrors.map(e => {
+          if (e.includes('credit balance')) return 'Claude: hết credit'
+          if (e.includes('Incorrect API key') || e.includes('invalid_api_key')) return 'OpenAI: API key sai'
+          if (e.includes('401')) return 'OpenAI: key không hợp lệ'
+          if (e.includes('Connection refused') || e.includes('Ollama unavailable')) return 'Ollama: chưa chạy'
+          if (e.includes('500') || e.includes('502') || e.includes('503')) return 'Server đang bận, thử lại'
+          return e.substring(0, 60)
+        })
+        const shortMsg = shortMsgs.join(' | ')
+
         setFiles(prev => prev.map(f =>
-          f.id === file.id ? { ...f, status: 'error' as const, message: msg } : f
+          f.id === file.id ? { ...f, status: 'error' as const, message: shortMsg } : f
         ))
-        addLog(`  [${file.filename}] ERROR: ${msg}`)
+        addLog(`  [${file.filename}] ERROR: ${shortMsg}`)
+
       }
 
       setProgress(prev => ({ ...prev, done: prev.done + 1 }))
