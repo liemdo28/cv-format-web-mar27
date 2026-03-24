@@ -763,11 +763,13 @@ async def process_cv(
                 print(f"[GDrive] Upload FAILED for {safe_name}.docx — GDrive not configured or error")
 
         if not drive_download_url:
+            # Fallback: keep local download so user can still download immediately
             return ProcessResponse(
-                status="partial",
-                message="DOCX generated locally. Google Drive upload failed, but you can still use the Download button.",
+                status="success",
+                message=f"Generated ({lang.upper()} template) — Google Drive upload failed, using local download fallback",
                 suggestedName=suggested_name,
                 downloadId=download_id,
+                downloadUrl=f"/download/{download_id}"
             )
 
         return ProcessResponse(
