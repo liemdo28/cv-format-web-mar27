@@ -1,11 +1,12 @@
 export interface FileItem {
   id: string
-  name: string           // original filename
-  filename: string       // editable output filename
+  name: string
+  filename: string
   type: 'PDF' | 'DOCX'
   status: 'pending' | 'processing' | 'success' | 'partial' | 'error'
   message: string
   file?: File
+  downloadId?: string
 }
 
 export interface Settings {
@@ -21,5 +22,6 @@ export interface ProcessResult {
   status: 'success' | 'error' | 'partial'
   message: string
   suggestedName?: string
-  outputDocxPath?: string
+  downloadId?: string
+  downloadUrl?: string
 }

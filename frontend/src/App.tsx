@@ -266,6 +266,25 @@ export default function App() {
     setProcessing(true)
     setProgress({ done: 0, total: toProcess.length })
 
+  // ── Download ────────────────────────────────────────────────
+  const downloadFiles = () => {
+    const successFiles = files.filter(f => f.status === 'success' && f.downloadId)
+    if (successFiles.length === 0) return
+
+    for (const file of successFiles) {
+      if (!file.downloadId) continue
+      const url = `${settings.backendUrl}/download/${file.downloadId}`
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.filename || 'output.docx'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      addLog(`Downloading: ${file.filename || 'output.docx'}`)
+    }
+    showToast(`Downloading ${successFiles.length} file(s)...`)
+  }
+
     for (const file of toProcess) {
       setFiles(prev => prev.map(f =>
         f.id === file.id ? { ...f, status: 'processing' as const, message: 'Processing...' } : f
@@ -298,7 +317,8 @@ export default function App() {
                 message: result.message,
                 filename: result.suggestedName
                   ? `${result.suggestedName}${f.name.substring(f.name.lastIndexOf('.'))}`
-                  : f.filename
+                  : f.filename,
+                downloadId: result.downloadId ?? undefined,
               }
             : f
         ))
@@ -481,8 +501,9 @@ export default function App() {
             <button
               className="btn"
               disabled={processing || success === 0}
+              onClick={downloadFiles}
             >
-              Download
+              Download ({success})
             </button>
             <div className="progress-area">
               <div className="progress-text">

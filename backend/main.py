@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import anthropic
 import openai
+import uuid
 
 app = FastAPI(title="CV Format Tool API")
 
@@ -552,7 +553,8 @@ class ProcessResponse(BaseModel):
     status: str
     message: str
     suggestedName: str | None = None
-    outputDocxPath: str | None = None
+    downloadId: str | None = None
+    downloadUrl: str | None = None
 
 
 @app.get("/")
@@ -662,12 +664,13 @@ async def process_cv(
         # Build suggested name: [Company] - [Position] - [Name]
         suggested_name = build_suggested_name(cv_data)
 
-        # Generate output filename
-        safe_name = re.sub(r'[^\w\s.-]', '', file.filename).strip()
+        # Generate unique download ID and path
+        download_id = str(uuid.uuid4())[:8]
+        safe_name = re.sub(r'[^\w\s.-]', '', file.filename or "cv").strip()
         safe_name = re.sub(r'\s+', '_', safe_name)
-        output_dir = os.path.join(OUTPUT_DIR, safe_name.replace(suffix, ""))
+        output_dir = os.path.join(OUTPUT_DIR, download_id)
         os.makedirs(output_dir, exist_ok=True)
-        output_docx = os.path.join(output_dir, f"{safe_name.replace(suffix, '')}.docx")
+        output_docx = os.path.join(output_dir, f"{safe_name}{suffix}")
 
         # Fill template
         try:
@@ -682,21 +685,32 @@ async def process_cv(
             status="success",
             message=f"Generated ({lang.upper()} template)",
             suggestedName=suggested_name,
-            outputDocxPath=output_docx
+            downloadId=download_id,
+            downloadUrl=f"/download/{download_id}"
         )
 
     finally:
         os.unlink(tmp_path)
 
 
-@app.get("/download/{filename}")
-async def download(filename: str):
-    """Download a processed DOCX file."""
-    safe_name = filename.replace("..", "").replace("/", "").replace("\\", "")
-    path = os.path.join(OUTPUT_DIR, safe_name)
-    if not os.path.exists(path):
+@app.get("/download/{download_id}")
+async def download(download_id: str):
+    """Download a processed DOCX file by its ID."""
+    path = os.path.join(OUTPUT_DIR, download_id)
+    if not os.path.isdir(path):
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(path, filename=filename, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+    # Find the .docx file in that directory
+    files = [f for f in os.listdir(path) if f.endswith('.docx')]
+    if not files:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = os.path.join(path, files[0])
+    return FileResponse(
+        file_path,
+        filename=files[0],
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
 
 
 if __name__ == "__main__":
