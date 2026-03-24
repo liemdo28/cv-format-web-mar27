@@ -9,7 +9,7 @@ const DEFAULT_SETTINGS: Settings = {
   model: 'claude-sonnet-4-20250514',
   openaiModel: 'gpt-4o-mini',
   extractionMode: 'auto',
-  backendUrl: 'http://localhost:8000',
+  backendUrl: (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000',
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -170,31 +170,50 @@ export default function App() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // ── Helpers ────────────────────────────────────────────────────
+  function buildDownloadUrl(file: FileItem, backendUrl: string): string {
+    if (file.downloadUrl) {
+      return file.downloadUrl.startsWith('http')
+        ? file.downloadUrl
+        : `${backendUrl}${file.downloadUrl}`
+    }
+    if (file.downloadId) {
+      return `${backendUrl}/download/${encodeURIComponent(file.downloadId)}`
+    }
+    return ''
+  }
+
+  async function downloadSingleFile(file: FileItem, backendUrl: string): Promise<void> {
+    const url = buildDownloadUrl(file, backendUrl)
+    if (!url) return
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`)
+    const blob = await res.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = file.filename || 'output.docx'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  }
+
   // ── Download ────────────────────────────────────────────────
-  const downloadFiles = () => {
+  const downloadFiles = async () => {
     const successFiles = files.filter(f => f.status === 'success' && (f.downloadUrl || f.downloadId))
     if (successFiles.length === 0) {
       showToast('No processed files to download')
       return
     }
-    successFiles.forEach((file, i) => {
-      setTimeout(() => {
-        let url = file.downloadUrl || ''
-        // If downloadUrl is a relative path (starts with /), prepend backend URL
-        if (url.startsWith('/')) {
-          url = `${settings.backendUrl}${url}`
-        }
-        if (!url) return
-        const a = document.createElement('a')
-        a.href = url
-        a.download = file.filename || 'output.docx'
-        a.target = '_blank'
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
+    for (const file of successFiles) {
+      try {
+        await downloadSingleFile(file, settings.backendUrl)
         addLog(`Downloaded: ${file.filename}`)
-      }, i * 500)
-    })
+      } catch (err) {
+        addLog(`Download failed: ${file.filename}`)
+      }
+    }
     showToast(`Downloading ${successFiles.length} file(s)...`)
   }
 
