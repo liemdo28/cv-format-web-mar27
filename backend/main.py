@@ -133,6 +133,65 @@ def detect_language_from_text(text: str) -> str:
 
 
 # ── AI Extraction ─────────────────────────────────────────────
+def _parse_json_response(text: str) -> dict:
+    """Extract and parse JSON from AI response with multiple fallback strategies."""
+    # Strategy 1: Extract from markdown code block
+    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+    json_str = json_match.group(1).strip() if json_match else text.strip()
+
+    # Strategy 2: If no code block, try finding JSON object directly
+    if not json_match:
+        # Find first { and last }
+        start = json_str.find('{')
+        end = json_str.rfind('}') + 1
+        if start != -1 and end > start:
+            json_str = json_str[start:end]
+
+    # Try parsing directly
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 3: Try to fix common issues
+    # Remove trailing commas before }
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+    # Remove control characters
+    json_str = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', json_str)
+    # Fix unquoted keys (basic)
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 4: Try OpenAI-style response without code block
+    # Find the JSON object boundaries
+    brace_count = 0
+    start_found = False
+    start_pos = end_pos = -1
+    for i, c in enumerate(text):
+        if c == '{':
+            if not start_found:
+                start_pos = i
+                start_found = True
+            brace_count += 1
+        elif c == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_found:
+                end_pos = i + 1
+                break
+
+    if start_pos != -1 and end_pos > start_pos:
+        candidate = text[start_pos:end_pos]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: raise the original error
+    raise ValueError(f"Could not parse JSON from response. Text preview: {text[:200]}")
+
+
 def extract_with_claude(cv_text: str, api_key: str, model: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
@@ -141,8 +200,7 @@ def extract_with_claude(cv_text: str, api_key: str, model: str) -> dict:
         messages=[{"role": "user", "content": EXTRACTION_PROMPT + cv_text}]
     )
     response_text = message.content[0].text
-    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
-    return json.loads(json_match.group(1) if json_match else response_text)
+    return _parse_json_response(response_text)
 
 
 def extract_with_ollama(cv_text: str, model: str = "qwen2.5:14b") -> dict:
@@ -165,8 +223,7 @@ def extract_with_ollama(cv_text: str, model: str = "qwen2.5:14b") -> dict:
     except urllib.error.URLError as e:
         raise ConnectionError(f"Ollama unavailable: {e.reason}")
 
-    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
-    return json.loads(json_match.group(1) if json_match else response_text)
+    return _parse_json_response(response_text)
 
 
 def extract_cv_data(cv_text: str, api_key: str, model: str, mode: str,
@@ -219,8 +276,7 @@ def extract_with_openai(cv_text: str, api_key: str, model: str) -> dict:
         ]
     )
     response_text = response.choices[0].message.content or ""
-    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
-    return json.loads(json_match.group(1) if json_match else response_text)
+    return _parse_json_response(response_text)
 
 
 def build_suggested_name(cv_data: dict) -> str:
