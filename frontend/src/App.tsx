@@ -214,6 +214,51 @@ export default function App() {
     const toProcess = files.filter(f => f.status !== 'success')
     if (toProcess.length === 0) { showToast('All files already processed'); return }
 
+    // Pre-flight check: which providers are available?
+    addLog('Checking AI providers...')
+    let providerStatus: Record<string, string> = {}
+    try {
+      const res = await axios.get(`${settings.backendUrl}/health`, {
+        params: {
+          api_key: settings.apiKey,
+          openai_api_key: settings.openaiApiKey,
+        },
+        timeout: 15000,
+      })
+      providerStatus = res.data
+      for (const [provider, status] of Object.entries(providerStatus)) {
+        const icons: Record<string, string> = { ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌' }
+        const icon = icons[status as string] ?? '❓'
+        addLog(`  ${provider}: ${icon} ${status}`)
+      }
+    } catch {
+      addLog('  (health check failed, proceeding anyway)')
+    }
+
+    const hasClaude = providerStatus['claude'] === 'ok'
+    const hasOpenAI = providerStatus['openai'] === 'ok'
+    const hasOllama = providerStatus['ollama'] === 'ok'
+
+    if (!hasClaude && !hasOpenAI && !hasOllama) {
+      const hints: string[] = []
+      if (!settings.apiKey) hints.push('Claude: chưa nhập key')
+      else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: hết credit ($0)')
+      else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key sai')
+      else hints.push('Claude: lỗi')
+
+      if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')
+      else if (providerStatus['openai'] === 'invalid_key') hints.push('OpenAI: API key sai')
+      else hints.push('OpenAI: lỗi')
+
+      hints.push('Ollama: chưa chạy (chạy "ollama serve" để bật)')
+
+      showToast('Không có AI provider nào khả dụng!')
+      addLog('❌ No AI provider available:')
+      hints.forEach(h => addLog(`  - ${h}`))
+      return
+    }
+
+    addLog(`Starting processing with: ${[hasClaude && 'Claude', hasOpenAI && 'OpenAI', hasOllama && 'Ollama'].filter(Boolean).join(' + ')}`)
     setProcessing(true)
     setProgress({ done: 0, total: toProcess.length })
 

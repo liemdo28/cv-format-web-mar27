@@ -561,8 +561,44 @@ async def root():
 
 
 @app.get("/health")
-async def health():
-    return {"status": "ok"}
+async def health(api_key: str = "", openai_api_key: str = ""):
+    """Check which AI providers are available."""
+    result = {"claude": "unavailable", "openai": "unavailable", "ollama": "unavailable"}
+
+    if api_key:
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            client.messages.create(model="claude-sonnet-4-20250514", max_tokens=1, messages=[{"role": "user", "content": "hi"}])
+            result["claude"] = "ok"
+        except Exception as e:
+            err = str(e)
+            if "credit" in err.lower() or "400" in err:
+                result["claude"] = "no_credit"
+            else:
+                result["claude"] = f"error: {err[:80]}"
+
+    if openai_api_key:
+        try:
+            client = openai.OpenAI(api_key=openai_api_key)
+            client.chat.completions.create(model="gpt-4o-mini", max_tokens=1, messages=[{"role": "user", "content": "hi"}])
+            result["openai"] = "ok"
+        except Exception as e:
+            err = str(e)
+            if "incorrect" in err.lower() or "invalid" in err.lower():
+                result["openai"] = "invalid_key"
+            else:
+                result["openai"] = f"error: {err[:80]}"
+
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://localhost:11434/api/tags", timeout=3)
+        with urllib.request.urlopen(req) as resp:
+            if resp.status == 200:
+                result["ollama"] = "ok"
+    except Exception:
+        pass
+
+    return result
 
 
 @app.post("/process", response_model=ProcessResponse)
