@@ -388,14 +388,19 @@ export default function App() {
           <span className="header-title">CV Format Tool</span>
           <span className="header-sub">Navigos Search — Web</span>
         </div>
-        <button className="settings-btn" onClick={() => setShowSettings(true)}>
-          Settings
-        </button>
+        {/* Author credit + Settings */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, color: '#8BA4C7' }}>
+            Van, Cu Thi Thuy — <strong style={{ color: '#A0B4C8' }}>Navigos Search</strong>
+          </span>
+          <button className="settings-btn" onClick={() => setShowSettings(true)}>
+            Settings
+          </button>
+        </div>
       </header>
 
       {/* Main layout */}
-      <div className="app-wrapper">
-        <div className="layout">
+      <div className="layout">
 
         {/* Left: File list */}
         <div className="card">
@@ -560,7 +565,6 @@ export default function App() {
           </div>
         </div>
       </div>
-      </div>
 
       {/* Hidden file input */}
       <input
@@ -583,17 +587,6 @@ export default function App() {
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
-
-      {/* Author credit */}
-      <div style={{
-        textAlign: 'right',
-        fontSize: 11,
-        color: '#6B7280',
-        padding: '4px 16px 8px',
-        borderTop: '1px solid var(--border)',
-      }}>
-        Powered by <strong>Navigos Search</strong>
-      </div>
     </>
   )
 }
