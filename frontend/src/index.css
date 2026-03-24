@@ -1,0 +1,503 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --navy: #1B2A4A;
+  --navy-light: #2C3E6B;
+  --navy-hover: #344B78;
+  --white: #FFFFFF;
+  --light-gray: #F0F2F5;
+  --med-gray: #D1D5DB;
+  --dark-text: #1F2937;
+  --green: #10B981;
+  --red: #EF4444;
+  --amber: #F59E0B;
+}
+
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background: var(--light-gray);
+  color: var(--dark-text);
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  background: var(--navy);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.header-title {
+  color: var(--white);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.header-sub {
+  color: #8BA4C7;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.settings-btn {
+  background: var(--navy-light);
+  color: var(--white);
+  border: none;
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.settings-btn:hover {
+  background: var(--navy-hover);
+}
+
+/* ── Layout ── */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 16px;
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+  min-height: calc(100vh - 120px);
+}
+
+/* ── Card ── */
+.card {
+  background: var(--white);
+  border-radius: 10px;
+  border: 1px solid var(--med-gray);
+  overflow: hidden;
+}
+
+.card-header {
+  background: var(--navy);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title {
+  color: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── Toolbar ── */
+.toolbar {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--light-gray);
+  flex-wrap: wrap;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Buttons ── */
+.btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--med-gray);
+  background: var(--white);
+  color: var(--dark-text);
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.btn:hover {
+  background: var(--light-gray);
+}
+
+.btn-primary {
+  background: var(--navy);
+  color: var(--white);
+  border-color: var(--navy);
+}
+
+.btn-primary:hover {
+  background: var(--navy-light);
+}
+
+.btn-danger {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.btn-danger:hover {
+  background: #FEE2E2;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Mode selector ── */
+.mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.mode-selector select {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--med-gray);
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--white);
+}
+
+/* ── File List ── */
+.file-list {
+  padding: 8px;
+  min-height: 300px;
+}
+
+.file-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #9CA3AF;
+}
+
+.file-empty-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.drop-zone {
+  border: 2px dashed var(--med-gray);
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  margin: 8px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.drop-zone.dragging {
+  border-color: var(--navy);
+  background: #EEF2FF;
+}
+
+.drop-zone p {
+  color: #6B7280;
+  font-size: 14px;
+}
+
+.drop-zone small {
+  color: #9CA3AF;
+  font-size: 12px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  gap: 10px;
+  transition: background 0.15s;
+}
+
+.file-item:hover {
+  background: var(--light-gray);
+}
+
+.file-item.success {
+  background: #D1FAE5;
+}
+
+.file-item.error {
+  background: #FEE2E2;
+}
+
+.file-item.processing {
+  background: #FEF3C7;
+}
+
+.file-num {
+  color: #9CA3AF;
+  font-size: 12px;
+  min-width: 20px;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-type {
+  background: #EEF2FF;
+  color: #4338CA;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.file-status {
+  font-size: 12px;
+  text-align: right;
+  min-width: 160px;
+}
+
+.status-success { color: var(--green); }
+.status-error { color: var(--red); }
+.status-pending { color: #9CA3AF; }
+.status-processing { color: var(--amber); }
+
+/* ── Summary + Log ── */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.summary-body {
+  padding: 12px 16px;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.summary-row span:last-child {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.log-box {
+  padding: 8px 12px;
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  color: #374151;
+  background: #F8FAFC;
+  min-height: 200px;
+  max-height: 350px;
+  overflow-y: auto;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.log-entry {
+  margin-bottom: 2px;
+}
+
+/* ── Output bar ── */
+.output-bar {
+  padding: 8px 14px;
+  border-top: 1px solid var(--light-gray);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.output-bar label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.output-bar input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--med-gray);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+/* ── Action bar ── */
+.action-bar {
+  padding: 10px 14px;
+  background: var(--light-gray);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-area {
+  margin-left: auto;
+  text-align: right;
+}
+
+.progress-text {
+  font-size: 11px;
+  color: #6B7280;
+  margin-bottom: 4px;
+}
+
+.progress-bar-bg {
+  width: 200px;
+  height: 6px;
+  background: var(--med-gray);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--navy);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+/* ── Modal / Settings ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--white);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 95vw;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.modal-header {
+  background: var(--navy);
+  padding: 12px 20px;
+  border-radius: 12px 12px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  color: var(--white);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--white);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.form-row label {
+  width: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.form-row input[type="text"],
+.form-row input[type="password"] {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--med-gray);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.form-row input[type="file"] {
+  font-size: 12px;
+}
+
+.modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--light-gray);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Mode radios ── */
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  width: auto;
+  font-weight: 400;
+}
+
+/* ── Toast ── */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--navy);
+  color: var(--white);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 200;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
