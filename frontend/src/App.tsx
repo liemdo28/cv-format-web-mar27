@@ -170,6 +170,30 @@ export default function App() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // ── Download ────────────────────────────────────────────────
+  const downloadFiles = () => {
+    const successFiles = files.filter(f => f.status === 'success' && f.downloadId)
+    if (successFiles.length === 0) {
+      showToast('No processed files to download')
+      return
+    }
+    successFiles.forEach((file, i) => {
+      setTimeout(() => {
+        if (!file.downloadId) return
+        const url = `${settings.backendUrl}/download/${file.downloadId}`
+        const a = document.createElement('a')
+        a.href = url
+        a.download = file.filename || 'output.docx'
+        a.target = '_blank'
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        addLog(`Downloaded: ${file.filename}`)
+      }, i * 500)
+    })
+    showToast(`Downloading ${successFiles.length} file(s)...`)
+  }
+
   // Persist settings
   useEffect(() => {
     localStorage.setItem('cvformat-settings-v2', JSON.stringify(settings))
@@ -265,25 +289,6 @@ export default function App() {
     addLog(`Starting processing with: ${[hasClaude && 'Claude', hasOpenAI && 'OpenAI', hasOllama && 'Ollama'].filter(Boolean).join(' + ')}`)
     setProcessing(true)
     setProgress({ done: 0, total: toProcess.length })
-
-  // ── Download ────────────────────────────────────────────────
-  const downloadFiles = () => {
-    const successFiles = files.filter(f => f.status === 'success' && f.downloadId)
-    if (successFiles.length === 0) return
-
-    for (const file of successFiles) {
-      if (!file.downloadId) continue
-      const url = `${settings.backendUrl}/download/${file.downloadId}`
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.filename || 'output.docx'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      addLog(`Downloading: ${file.filename || 'output.docx'}`)
-    }
-    showToast(`Downloading ${successFiles.length} file(s)...`)
-  }
 
     for (const file of toProcess) {
       setFiles(prev => prev.map(f =>
@@ -389,7 +394,8 @@ export default function App() {
       </header>
 
       {/* Main layout */}
-      <div className="layout">
+      <div className="app-wrapper">
+        <div className="layout">
 
         {/* Left: File list */}
         <div className="card">
@@ -554,6 +560,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      </div>
 
       {/* Hidden file input */}
       <input
@@ -576,6 +583,17 @@ export default function App() {
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
+
+      {/* Author credit */}
+      <div style={{
+        textAlign: 'right',
+        fontSize: 11,
+        color: '#6B7280',
+        padding: '4px 16px 8px',
+        borderTop: '1px solid var(--border)',
+      }}>
+        Powered by <strong>Navigos Search</strong>
+      </div>
     </>
   )
 }

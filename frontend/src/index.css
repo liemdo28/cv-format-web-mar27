@@ -62,14 +62,17 @@ body {
 }
 
 /* ── Layout ── */
+.app-wrapper {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px 16px 0;
+  min-height: calc(100vh - 52px);
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1fr 340px;
   gap: 16px;
-  padding: 16px;
-  max-width: 1400px;
-  margin: 0 auto;
-  min-height: calc(100vh - 120px);
 }
 
 /* ── Card ── */
