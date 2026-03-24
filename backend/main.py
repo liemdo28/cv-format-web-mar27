@@ -22,6 +22,15 @@ import openai
 import uuid
 
 from drive_utils import upload_file, HAS_GDRIVE
+from offline_engine import (
+    extract_offline,
+    build_suggested_name_offline,
+    fill_template_offline,
+    learn_mapping,
+    learn_from_training_pair,
+    load_learning_store,
+    reset_learning_store,
+)
 
 app = FastAPI(title="CV Format Tool API")
 
@@ -619,6 +628,34 @@ class ProcessResponse(BaseModel):
     suggestedName: str | None = None
     downloadId: str | None = None
     downloadUrl: str | None = None
+    reviewRequired: list[dict] | None = None
+
+
+class FeedbackRequest(BaseModel):
+    placeholder: str
+    canonicalField: str
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+    message: str
+    learnedPlaceholder: str | None = None
+    canonicalField: str | None = None
+
+
+class TrainFormatResponse(BaseModel):
+    ok: bool
+    message: str
+    learnedAliases: dict[str, list[str]]
+    learnedMappings: dict[str, str]
+    labelCandidates: int
+    sectionCandidates: int
+
+
+class LearningStoreResponse(BaseModel):
+    ok: bool
+    message: str
+    data: dict
 
 
 @app.get("/")
@@ -713,20 +750,31 @@ async def process_cv(
         lang = detect_language_from_text(cv_text)
         template_path = TEMPLATE_VN if lang == "vi" else TEMPLATE_EN
 
-        # Extract CV data (Claude → OpenAI → Ollama fallback)
-        try:
-            cv_data = extract_cv_data(
-                cv_text, api_key, model, extraction_mode,
-                openai_key=openai_api_key, openai_model=openai_model
-            )
-        except Exception as e:
-            return ProcessResponse(
-                status="error",
-                message=f"AI extraction failed: {str(e)}"
-            )
+        # Extract CV data
+        review_required: list[dict] = []
+        if extraction_mode == "offline":
+            cv_data = extract_offline(cv_text)
+            suggested_name = build_suggested_name_offline(cv_data)
+        else:
+            # Claude → OpenAI → Ollama fallback
+            try:
+                cv_data = extract_cv_data(
+                    cv_text, api_key, model, extraction_mode,
+                    openai_key=openai_api_key, openai_model=openai_model
+                )
+            except Exception as e:
+                return ProcessResponse(
+                    status="error",
+                    message=f"AI extraction failed: {str(e)}"
+                )
 
-        # Build suggested name: [Company] - [Position] - [Name]
-        suggested_name = build_suggested_name(cv_data)
+            # Build suggested name: [Company] - [Position] - [Name]
+            suggested_name = build_suggested_name(cv_data)
+
+        if not suggested_name:
+            suggested_name = os.path.splitext(file.filename or "cv")[0]
+
+        template_fill_meta: dict = {}
 
         # Generate unique download ID and path
         download_id = str(uuid.uuid4())[:8]
@@ -739,7 +787,11 @@ async def process_cv(
 
         # Fill template
         try:
-            fill_template(template_path, cv_data, "CLIENT", "POSITION", output_docx)
+            if extraction_mode == "offline":
+                template_fill_meta = fill_template_offline(template_path, output_docx, cv_data)
+                review_required = template_fill_meta.get("reviewRequired", [])
+            else:
+                fill_template(template_path, cv_data, "CLIENT", "POSITION", output_docx)
         except Exception as e:
             return ProcessResponse(
                 status="error",
@@ -762,26 +814,112 @@ async def process_cv(
             else:
                 print(f"[GDrive] Upload FAILED for {safe_name}.docx — GDrive not configured or error")
 
+        mode_label = "OFFLINE" if extraction_mode == "offline" else "AI"
+
         if not drive_download_url:
             # Fallback: keep local download so user can still download immediately
             return ProcessResponse(
                 status="success",
-                message=f"Generated ({lang.upper()} template) — Google Drive upload failed, using local download fallback",
+                message=f"Generated ({lang.upper()} template, {mode_label}) — Google Drive upload failed, using local download fallback",
                 suggestedName=suggested_name,
                 downloadId=download_id,
-                downloadUrl=f"/download/{download_id}"
+                downloadUrl=f"/download/{download_id}",
+                reviewRequired=review_required if extraction_mode == "offline" else None,
             )
 
         return ProcessResponse(
             status="success",
-            message=f"Generated ({lang.upper()} template)",
+            message=f"Generated ({lang.upper()} template, {mode_label})",
             suggestedName=suggested_name,
             downloadId=download_id,
-            downloadUrl=drive_download_url
+            downloadUrl=drive_download_url,
+            reviewRequired=review_required if extraction_mode == "offline" else None,
         )
 
     finally:
         os.unlink(tmp_path)
+
+
+@app.post("/feedback", response_model=FeedbackResponse)
+async def feedback(payload: FeedbackRequest):
+    placeholder = (payload.placeholder or "").strip()
+    canonical = (payload.canonicalField or "").strip()
+    if not placeholder or not canonical:
+        raise HTTPException(status_code=400, detail="placeholder and canonicalField are required")
+
+    learn_mapping(placeholder, canonical)
+    return FeedbackResponse(
+        ok=True,
+        message="Learned mapping successfully",
+        learnedPlaceholder=placeholder,
+        canonicalField=canonical,
+    )
+
+
+@app.get("/offline/rules", response_model=LearningStoreResponse)
+async def offline_rules_status():
+    return LearningStoreResponse(
+        ok=True,
+        message="Offline learning store loaded",
+        data=load_learning_store(),
+    )
+
+
+@app.post("/offline/rules/reset", response_model=LearningStoreResponse)
+async def offline_rules_reset():
+    reset_data = reset_learning_store()
+    return LearningStoreResponse(
+        ok=True,
+        message="Offline learning store reset to defaults",
+        data=reset_data,
+    )
+
+
+@app.post("/train/format", response_model=TrainFormatResponse)
+async def train_format_pair(
+    raw_file: UploadFile = File(...),
+    done_file: UploadFile = File(...),
+):
+    if not raw_file.filename or not done_file.filename:
+        raise HTTPException(status_code=400, detail="Both raw_file and done_file are required")
+
+    def _valid_ext(name: str) -> bool:
+        return os.path.splitext(name)[1].lower() in (".pdf", ".docx")
+
+    if not _valid_ext(raw_file.filename) or not _valid_ext(done_file.filename):
+        raise HTTPException(status_code=400, detail="Only PDF/DOCX files are supported for training")
+
+    def _save_upload(upload: UploadFile) -> str:
+        suffix = os.path.splitext(upload.filename or "")[1].lower() or ".tmp"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            shutil.copyfileobj(upload.file, tmp)
+            return tmp.name
+
+    raw_tmp = _save_upload(raw_file)
+    done_tmp = _save_upload(done_file)
+
+    try:
+        raw_ext = os.path.splitext(raw_file.filename)[1].lower()
+        done_ext = os.path.splitext(done_file.filename)[1].lower()
+
+        raw_text = extract_text_from_pdf(raw_tmp) if raw_ext == ".pdf" else extract_text_from_docx(raw_tmp)
+        done_text = extract_text_from_pdf(done_tmp) if done_ext == ".pdf" else extract_text_from_docx(done_tmp)
+
+        if not raw_text.strip() or not done_text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from one or both training files")
+
+        learned = learn_from_training_pair(raw_text, done_text)
+        return TrainFormatResponse(
+            ok=True,
+            message="Training completed. Offline engine learned additional format aliases.",
+            learnedAliases=learned.get("learnedAliases", {}),
+            learnedMappings=learned.get("learnedMappings", {}),
+            labelCandidates=learned.get("labelCandidates", 0),
+            sectionCandidates=learned.get("sectionCandidates", 0),
+        )
+    finally:
+        os.unlink(raw_tmp)
+        os.unlink(done_tmp)
 
 
 @app.get("/download/{download_id}")

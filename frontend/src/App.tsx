@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import axios from 'axios'
 import type { FileItem, Settings, ProcessResult } from './types'
+import TrainingPanel from './TrainingPanel'
 
 // ── Default settings ───────────────────────────────────────────
 const DEFAULT_SETTINGS: Settings = {
@@ -8,7 +9,7 @@ const DEFAULT_SETTINGS: Settings = {
   openaiApiKey: '',
   model: 'claude-sonnet-4-20250514',
   openaiModel: 'gpt-4o-mini',
-  extractionMode: 'auto',
+  extractionMode: 'offline',
   backendUrl: (import.meta.env.VITE_API_URL as string) || 'http://localhost:8000',
 }
 
@@ -36,6 +37,7 @@ function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
   const [s, setS] = useState<Settings>({ ...settings })
 
   const modes: { value: Settings['extractionMode']; label: string }[] = [
+    { value: 'offline',      label: 'Offline Rule Engine (No API)' },
     { value: 'auto',         label: 'Auto (Claude → OpenAI → Ollama)' },
     { value: 'claude_api',   label: 'Claude API Only' },
     { value: 'openai_api',   label: 'OpenAI API Only' },
@@ -158,6 +160,7 @@ export default function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [dragging, setDragging] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'process' | 'training'>('process')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
@@ -305,55 +308,65 @@ export default function App() {
     const toProcess = files.filter(f => !isDownloadable(f) && f.status !== 'success')
     if (toProcess.length === 0) { showToast('All files already processed'); return }
 
-    // Pre-flight check: which providers are available?
-    addLog('Checking AI providers...')
+    const isOfflineMode = settings.extractionMode === 'offline'
+
     let providerStatus: Record<string, string> = {}
-    try {
-      const res = await axios.get(`${settings.backendUrl}/health`, {
-        params: {
-          api_key: settings.apiKey,
-          openai_api_key: settings.openaiApiKey,
-        },
-        timeout: 15000,
-      })
-      providerStatus = res.data
-      for (const [provider, status] of Object.entries(providerStatus)) {
-        const icons: Record<string, string> = {
-          ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
-          quota_exceeded: '⚠️', error: '❌'
+    let hasClaude = false
+    let hasOpenAI = false
+    let hasOllama = false
+
+    if (!isOfflineMode) {
+      // Pre-flight check: which providers are available?
+      addLog('Checking AI providers...')
+      try {
+        const res = await axios.get(`${settings.backendUrl}/health`, {
+          params: {
+            api_key: settings.apiKey,
+            openai_api_key: settings.openaiApiKey,
+          },
+          timeout: 15000,
+        })
+        providerStatus = res.data
+        for (const [provider, status] of Object.entries(providerStatus)) {
+          const icons: Record<string, string> = {
+            ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
+            quota_exceeded: '⚠️', error: '❌'
+          }
+          const icon = icons[status as string] ?? '❓'
+          addLog(`  ${provider}: ${icon} ${status}`)
         }
-        const icon = icons[status as string] ?? '❓'
-        addLog(`  ${provider}: ${icon} ${status}`)
+      } catch {
+        addLog('  (health check failed, proceeding anyway)')
       }
-    } catch {
-      addLog('  (health check failed, proceeding anyway)')
+
+      hasClaude = providerStatus['claude'] === 'ok'
+      hasOpenAI = providerStatus['openai'] === 'ok'
+      hasOllama = providerStatus['ollama'] === 'ok'
+
+      if (!hasClaude && !hasOpenAI && !hasOllama) {
+        const hints: string[] = []
+        if (!settings.apiKey) hints.push('Claude: chưa nhập key')
+        else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: HẾT CREDIT - nạp tiền tại console.anthropic.com')
+        else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key SAI - kiểm tra lại key')
+        else hints.push('Claude: lỗi')
+
+        if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')
+        else if (providerStatus['openai'] === 'invalid_key') hints.push('OpenAI: API key sai')
+        else if (providerStatus['openai'] === 'quota_exceeded') hints.push('OpenAI: HẾT QUOTA - nạp tiền tại platform.openai.com')
+        else hints.push('OpenAI: lỗi')
+
+        hints.push('Ollama: chưa chạy (chạy "ollama serve")')
+
+        showToast('Không có AI provider nào khả dụng!')
+        addLog('❌ No AI provider available:')
+        hints.forEach(h => addLog(`  - ${h}`))
+        return
+      }
+
+      addLog(`Starting processing with: ${[hasClaude && 'Claude', hasOpenAI && 'OpenAI', hasOllama && 'Ollama'].filter(Boolean).join(' + ')}`)
+    } else {
+      addLog('Starting processing with: Offline Rule Engine (No API)')
     }
-
-    const hasClaude = providerStatus['claude'] === 'ok'
-    const hasOpenAI = providerStatus['openai'] === 'ok'
-    const hasOllama = providerStatus['ollama'] === 'ok'
-
-    if (!hasClaude && !hasOpenAI && !hasOllama) {
-      const hints: string[] = []
-      if (!settings.apiKey) hints.push('Claude: chưa nhập key')
-      else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: HẾT CREDIT - nạp tiền tại console.anthropic.com')
-      else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key SAI - kiểm tra lại key')
-      else hints.push('Claude: lỗi')
-
-      if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')
-      else if (providerStatus['openai'] === 'invalid_key') hints.push('OpenAI: API key sai')
-      else if (providerStatus['openai'] === 'quota_exceeded') hints.push('OpenAI: HẾT QUOTA - nạp tiền tại platform.openai.com')
-      else hints.push('OpenAI: lỗi')
-
-      hints.push('Ollama: chưa chạy (chạy "ollama serve")')
-
-      showToast('Không có AI provider nào khả dụng!')
-      addLog('❌ No AI provider available:')
-      hints.forEach(h => addLog(`  - ${h}`))
-      return
-    }
-
-    addLog(`Starting processing with: ${[hasClaude && 'Claude', hasOpenAI && 'OpenAI', hasOllama && 'Ollama'].filter(Boolean).join(' + ')}`)
     setProcessing(true)
     setProgress({ done: 0, total: toProcess.length })
 
@@ -379,25 +392,34 @@ export default function App() {
         )
 
         const result = res.data
-        const newStatus = result.status as FileItem['status']
+        const reviewCount = result.reviewRequired?.length ?? 0
+        const hasReviewWarnings = reviewCount > 0
+        const newStatus = (hasReviewWarnings && result.status === 'success' ? 'partial' : result.status) as FileItem['status']
+        const statusMessage = hasReviewWarnings
+          ? `${result.message} — Need Review (${reviewCount} field${reviewCount > 1 ? 's' : ''})`
+          : result.message
 
         setFiles(prev => prev.map(f =>
           f.id === file.id
             ? {
                 ...f,
                 status: newStatus,
-                message: result.message,
+                message: statusMessage,
                 filename: result.suggestedName
                   ? stripExtension(result.suggestedName)
                   : stripExtension(f.filename),
                 downloadId: result.downloadId ?? undefined,
                 downloadUrl: result.downloadUrl ?? undefined,
+                reviewRequired: result.reviewRequired ?? undefined,
               }
             : f
         ))
-        addLog(`  [${file.filename}] ${newStatus.toUpperCase()}: ${result.message}`)
+        addLog(`  [${file.filename}] ${newStatus.toUpperCase()}: ${statusMessage}`)
         if (result.suggestedName) {
           addLog(`  Suggested: ${result.suggestedName}`)
+        }
+        if (hasReviewWarnings) {
+          addLog(`  Review fields: ${result.reviewRequired?.map(r => r.placeholder).slice(0, 5).join(', ')}`)
         }
 
       } catch (err: unknown) {
@@ -468,6 +490,31 @@ export default function App() {
         </div>
       </header>
 
+      {/* Tab Navigation */}
+      <nav className="tab-nav">
+        <button
+          className={`tab-btn${activeTab === 'process' ? ' active' : ''}`}
+          onClick={() => setActiveTab('process')}
+        >
+          📋 Process CV
+        </button>
+        <button
+          className={`tab-btn${activeTab === 'training' ? ' active' : ''}`}
+          onClick={() => setActiveTab('training')}
+        >
+          🧠 Format Training
+        </button>
+      </nav>
+
+      {/* Tab Content */}
+      {activeTab === 'training' ? (
+        <TrainingPanel
+          backendUrl={settings.backendUrl}
+          onLog={msg => addLog(`[TRAIN] ${msg}`)}
+          onToast={showToast}
+        />
+      ) : (
+      <>
       {/* Main layout */}
       <div className="layout">
 
@@ -503,6 +550,7 @@ export default function App() {
                   value={settings.extractionMode}
                   onChange={e => setSettings(s => ({ ...s, extractionMode: e.target.value as Settings['extractionMode'] }))}
                 >
+                  <option value="offline">Offline</option>
                   <option value="auto">Auto</option>
                   <option value="claude_api">Claude</option>
                   <option value="openai_api">OpenAI</option>
@@ -665,6 +713,8 @@ export default function App() {
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
+      </>
+      )}
     </>
   )
 }

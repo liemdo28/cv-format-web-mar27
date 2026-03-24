@@ -1,3 +1,10 @@
+export interface ReviewItem {
+  placeholder: string
+  mappedField: string
+  confidence: number
+  filled: boolean
+}
+
 export interface FileItem {
   id: string
   name: string
@@ -8,6 +15,7 @@ export interface FileItem {
   file?: File
   downloadId?: string
   downloadUrl?: string
+  reviewRequired?: ReviewItem[]
 }
 
 export interface Settings {
@@ -15,7 +23,7 @@ export interface Settings {
   openaiApiKey: string
   model: string
   openaiModel: string
-  extractionMode: 'auto' | 'claude_api' | 'openai_api' | 'ollama' | 'cached'
+  extractionMode: 'auto' | 'claude_api' | 'openai_api' | 'ollama' | 'cached' | 'offline'
   backendUrl: string
 }
 
@@ -25,4 +33,5 @@ export interface ProcessResult {
   suggestedName?: string
   downloadId?: string
   downloadUrl?: string
+  reviewRequired?: ReviewItem[]
 }

@@ -1,0 +1,30 @@
+{
+  "aliases": {
+    "full_name": ["name", "candidate_name", "full name", "họ tên", "ứng viên"],
+    "email": ["e-mail", "mail"],
+    "phone": ["mobile", "phone_number", "điện thoại", "số điện thoại"],
+    "current_company": ["company", "company_name", "công ty", "công ty hiện tại"],
+    "current_position": ["position", "job_title", "chức danh", "vị trí hiện tại"],
+    "summary": ["profile", "professional_summary", "tóm tắt"],
+    "experience": ["work_experience", "kinh nghiệm", "employment_history"],
+    "education": ["học vấn", "academic"],
+    "skills": ["kỹ năng", "core_skills"],
+    "languages": ["ngôn ngữ", "language"],
+    "address": ["location", "địa chỉ"]
+  },
+  "template_map": {
+    "full_name": "full_name",
+    "name": "full_name",
+    "candidate_name": "full_name",
+    "email": "email",
+    "phone": "phone",
+    "current_company": "current_company",
+    "current_position": "current_position",
+    "summary": "summary",
+    "experience": "experience",
+    "education": "education",
+    "skills": "skills",
+    "languages": "languages",
+    "address": "address"
+  }
+}
