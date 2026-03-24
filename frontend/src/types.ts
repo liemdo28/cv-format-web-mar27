@@ -1,12 +1,11 @@
 export interface FileItem {
   id: string
   name: string           // original filename
-  displayName?: string   // suggested display name
+  filename: string       // editable output filename
   type: 'PDF' | 'DOCX'
   status: 'pending' | 'processing' | 'success' | 'partial' | 'error'
   message: string
   file?: File
-  suggestedName?: string // [Company] - [Position] - [Name]
 }
 
 export interface Settings {

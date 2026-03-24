@@ -182,10 +182,10 @@ export default function App() {
       .map(f => ({
         id: uid(),
         name: f.name,
+        filename: f.name.replace(/\.(pdf|docx)$/i, ''),
         type: (f.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'DOCX') as FileItem['type'],
         status: 'pending' as const,
         message: '',
-        suggestedName: '',
         file: f,
       }))
 
@@ -243,12 +243,19 @@ export default function App() {
 
         setFiles(prev => prev.map(f =>
           f.id === file.id
-            ? { ...f, status: newStatus, message: result.message, suggestedName: result.suggestedName ?? '' }
+            ? {
+                ...f,
+                status: newStatus,
+                message: result.message,
+                filename: result.suggestedName
+                  ? `${result.suggestedName}${f.name.substring(f.name.lastIndexOf('.'))}`
+                  : f.filename
+              }
             : f
         ))
-        addLog(`  [${file.name}] ${newStatus.toUpperCase()}: ${result.message}`)
+        addLog(`  [${file.filename}] ${newStatus.toUpperCase()}: ${result.message}`)
         if (result.suggestedName) {
-          addLog(`  Suggested name: ${result.suggestedName}`)
+          addLog(`  Suggested: ${result.suggestedName}`)
         }
 
       } catch (err: unknown) {
@@ -269,7 +276,7 @@ export default function App() {
         setFiles(prev => prev.map(f =>
           f.id === file.id ? { ...f, status: 'error' as const, message: msg } : f
         ))
-        addLog(`  [${file.name}] ERROR: ${msg}`)
+        addLog(`  [${file.filename}] ERROR: ${msg}`)
       }
 
       setProgress(prev => ({ ...prev, done: prev.done + 1 }))
@@ -367,15 +374,30 @@ export default function App() {
               <span className="file-num">{i + 1}</span>
               <div style={{ flex: 1, overflow: 'hidden' }}>
                 <div className="file-name" title={f.name}>{f.name}</div>
-                {f.suggestedName && f.status === 'success' && (
-                  <div style={{ fontSize: 11, color: 'var(--green)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {f.suggestedName}
-                  </div>
-                )}
+                <input
+                  type="text"
+                  value={f.filename}
+                  onChange={e => setFiles(prev => prev.map(item =>
+                    item.id === f.id ? { ...item, filename: e.target.value } : item
+                  ))}
+                  style={{
+                    width: '100%',
+                    fontSize: 12,
+                    color: 'var(--green)',
+                    fontWeight: 600,
+                    border: '1px solid #D1FAE5',
+                    borderRadius: 4,
+                    padding: '2px 6px',
+                    fontFamily: 'inherit',
+                    background: f.status === 'success' ? '#D1FAE5' : '#FEF9C3',
+                    outline: 'none',
+                  }}
+                  title="Output filename"
+                />
               </div>
               <span className="file-type">{f.type}</span>
               <span className={`file-status status-${f.status}`}>
-                {f.status === 'success' && '✓ Success'}
+                {f.status === 'success' && '✓ Done'}
                 {f.status === 'error' && `✗ ${f.message}`}
                 {f.status === 'processing' && '⏳ Processing...'}
                 {f.status === 'partial' && `⚠ ${f.message}`}
