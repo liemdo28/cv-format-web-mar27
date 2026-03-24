@@ -246,6 +246,7 @@ export default function App() {
       const hints: string[] = []
       if (!settings.apiKey) hints.push('Claude: chưa nhập key')
       else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: HẾT CREDIT - nạp tiền tại console.anthropic.com')
+      else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key SAI - kiểm tra lại key')
       else hints.push('Claude: lỗi')
 
       if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')

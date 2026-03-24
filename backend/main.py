@@ -572,8 +572,10 @@ async def health(api_key: str = "", openai_api_key: str = ""):
             result["claude"] = "ok"
         except Exception as e:
             err = str(e)
-            if "credit" in err.lower() or "400" in err:
+            if "credit" in err.lower():
                 result["claude"] = "no_credit"
+            elif "401" in err or "authentication" in err.lower() or "invalid" in err.lower():
+                result["claude"] = "invalid_key"
             else:
                 result["claude"] = f"error: {err[:80]}"
 
