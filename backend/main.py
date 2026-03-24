@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import anthropic
+import openai
 
 app = FastAPI(title="CV Format Tool API")
 
@@ -167,21 +168,95 @@ def extract_with_ollama(cv_text: str, model: str = "qwen2.5:14b") -> dict:
     return json.loads(json_match.group(1) if json_match else response_text)
 
 
-def extract_cv_data(cv_text: str, api_key: str, model: str, mode: str) -> dict:
-    """Auto: Claude first → Ollama fallback."""
+def extract_cv_data(cv_text: str, api_key: str, model: str, mode: str,
+                   openai_key: str = "", openai_model: str = "gpt-4o-mini") -> dict:
+    """Auto: Claude → OpenAI → Ollama (cascading fallback)."""
+    errors = []
+
+    # Step 1: Claude API
     if mode in ("auto", "claude_api") and api_key:
         try:
             return extract_with_claude(cv_text, api_key, model)
         except Exception as e:
+            errors.append(f"Claude: {e}")
             if mode == "claude_api":
-                raise
-            # Fall through to Ollama
+                raise ValueError(errors[-1])
 
+    # Step 2: OpenAI API
+    if mode in ("auto", "openai_api") and openai_key:
+        try:
+            return extract_with_openai(cv_text, openai_key, openai_model)
+        except Exception as e:
+            errors.append(f"OpenAI: {e}")
+            if mode == "openai_api":
+                raise ValueError(errors[-1])
+
+    # Step 3: Ollama (local)
     if mode in ("auto", "ollama"):
-        return extract_with_ollama(cv_text, model)
+        try:
+            return extract_with_ollama(cv_text, model)
+        except Exception as e:
+            errors.append(f"Ollama: {e}")
+            raise ValueError(" | ".join(errors))
 
     if mode == "cached":
         raise ValueError("No cached data — provide a file to extract")
+
+    raise ValueError(" | ".join(errors) if errors else "No AI provider available")
+
+
+def extract_with_openai(cv_text: str, api_key: str, model: str) -> dict:
+    """Use OpenAI API to extract structured data from CV text."""
+    client = openai.OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=8000,
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": "You are a CV/Resume parser. Extract structured information from the provided CV text and return ONLY valid JSON matching the exact structure provided in the user prompt."},
+            {"role": "user", "content": EXTRACTION_PROMPT + cv_text}
+        ]
+    )
+    response_text = response.choices[0].message.content or ""
+    json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
+    return json.loads(json_match.group(1) if json_match else response_text)
+
+
+def build_suggested_name(cv_data: dict) -> str:
+    """Build suggested output name: [Company] - [Position] - [Name]"""
+    career = cv_data.get("career_summary", [])
+    full_name = cv_data.get("full_name", "").strip()
+
+    # Find current/recent job (first with "Present" or most recent)
+    current_job = None
+    for job in career:
+        period = job.get("period", "")
+        if "Present" in period or "Hiện tại" in period:
+            current_job = job
+            break
+
+    # If no current, use most recent (first in list)
+    if current_job is None and career:
+        current_job = career[0]
+
+    company = (current_job.get("company", "") or "").strip().title()
+    positions = current_job.get("positions", []) if current_job else []
+    position = ""
+    if positions:
+        position = (positions[0].get("title", "") or "").strip().title()
+    if not position and current_job:
+        position = (current_job.get("title", "") or "").strip().title()
+
+    # Build name parts
+    parts = []
+    if company:
+        parts.append(company)
+    if position:
+        parts.append(position)
+    if full_name:
+        parts.append(full_name.title())
+
+    return " - ".join(parts) if parts else ""
 
 
 # ── Template Filling ───────────────────────────────────────────
@@ -476,7 +551,8 @@ def fill_template(template_path: str, cv_data: dict, client_name: str,
 class ProcessResponse(BaseModel):
     status: str
     message: str
-    output_docx_path: str | None = None
+    suggestedName: str | None = None
+    outputDocxPath: str | None = None
 
 
 @app.get("/")
@@ -495,6 +571,8 @@ async def process_cv(
     extraction_mode: str = Form("auto"),
     model: str = Form("claude-sonnet-4-20250514"),
     api_key: str = Form(""),
+    openai_api_key: str = Form(""),
+    openai_model: str = Form("gpt-4o-mini"),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -525,14 +603,20 @@ async def process_cv(
         lang = detect_language_from_text(cv_text)
         template_path = TEMPLATE_VN if lang == "vi" else TEMPLATE_EN
 
-        # Extract CV data
+        # Extract CV data (Claude → OpenAI → Ollama fallback)
         try:
-            cv_data = extract_cv_data(cv_text, api_key, model, extraction_mode)
+            cv_data = extract_cv_data(
+                cv_text, api_key, model, extraction_mode,
+                openai_key=openai_api_key, openai_model=openai_model
+            )
         except Exception as e:
             return ProcessResponse(
                 status="error",
                 message=f"AI extraction failed: {str(e)}"
             )
+
+        # Build suggested name: [Company] - [Position] - [Name]
+        suggested_name = build_suggested_name(cv_data)
 
         # Generate output filename
         safe_name = re.sub(r'[^\w\s.-]', '', file.filename).strip()
@@ -552,8 +636,9 @@ async def process_cv(
 
         return ProcessResponse(
             status="success",
-            message=f"Generated: {os.path.basename(output_docx)} ({lang.upper()} template)",
-            output_docx_path=output_docx
+            message=f"Generated ({lang.upper()} template)",
+            suggestedName=suggested_name,
+            outputDocxPath=output_docx
         )
 
     finally:
