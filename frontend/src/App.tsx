@@ -227,7 +227,10 @@ export default function App() {
       })
       providerStatus = res.data
       for (const [provider, status] of Object.entries(providerStatus)) {
-        const icons: Record<string, string> = { ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌' }
+        const icons: Record<string, string> = {
+          ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
+          quota_exceeded: '⚠️', error: '❌'
+        }
         const icon = icons[status as string] ?? '❓'
         addLog(`  ${provider}: ${icon} ${status}`)
       }
@@ -242,15 +245,15 @@ export default function App() {
     if (!hasClaude && !hasOpenAI && !hasOllama) {
       const hints: string[] = []
       if (!settings.apiKey) hints.push('Claude: chưa nhập key')
-      else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: hết credit ($0)')
-      else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key sai')
+      else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: HẾT CREDIT - nạp tiền tại console.anthropic.com')
       else hints.push('Claude: lỗi')
 
       if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')
       else if (providerStatus['openai'] === 'invalid_key') hints.push('OpenAI: API key sai')
+      else if (providerStatus['openai'] === 'quota_exceeded') hints.push('OpenAI: HẾT QUOTA - nạp tiền tại platform.openai.com')
       else hints.push('OpenAI: lỗi')
 
-      hints.push('Ollama: chưa chạy (chạy "ollama serve" để bật)')
+      hints.push('Ollama: chưa chạy (chạy "ollama serve")')
 
       showToast('Không có AI provider nào khả dụng!')
       addLog('❌ No AI provider available:')

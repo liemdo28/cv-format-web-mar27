@@ -582,10 +582,16 @@ async def health(api_key: str = "", openai_api_key: str = ""):
             client = openai.OpenAI(api_key=openai_api_key)
             client.chat.completions.create(model="gpt-4o-mini", max_tokens=1, messages=[{"role": "user", "content": "hi"}])
             result["openai"] = "ok"
+        except openai.RateLimitError as e:
+            result["openai"] = "quota_exceeded"
+        except openai.AuthenticationError as e:
+            result["openai"] = "invalid_key"
         except Exception as e:
             err = str(e)
             if "incorrect" in err.lower() or "invalid" in err.lower():
                 result["openai"] = "invalid_key"
+            elif "429" in err or "quota" in err.lower() or "exceeded" in err.lower():
+                result["openai"] = "quota_exceeded"
             else:
                 result["openai"] = f"error: {err[:80]}"
 
