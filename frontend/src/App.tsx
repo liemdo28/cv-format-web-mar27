@@ -21,6 +21,10 @@ function formatTime() {
   return new Date().toLocaleTimeString('en-US', { hour12: false })
 }
 
+function stripExtension(name: string) {
+  return name.replace(/\.[^.]+$/, '')
+}
+
 // ── Settings Modal ─────────────────────────────────────────────
 interface SettingsModalProps {
   settings: Settings
@@ -171,50 +175,90 @@ export default function App() {
   }
 
   // ── Helpers ────────────────────────────────────────────────────
+  function normalizeBackendUrl(url: string): string {
+    return url.trim().replace(/\/+$/, '')
+  }
+
+  function isDownloadable(file: FileItem): boolean {
+    return Boolean(file.downloadUrl || file.downloadId)
+  }
+
+  function getOutputFilename(file: FileItem): string {
+    const trimmed = file.filename.trim()
+    const baseName = trimmed ? stripExtension(trimmed) : 'output'
+    return `${baseName}.docx`
+  }
+
   function buildDownloadUrl(file: FileItem, backendUrl: string): string {
+    const normalizedBackendUrl = normalizeBackendUrl(backendUrl)
     if (file.downloadUrl) {
       return file.downloadUrl.startsWith('http')
         ? file.downloadUrl
-        : `${backendUrl}${file.downloadUrl}`
+        : `${normalizedBackendUrl}/${file.downloadUrl.replace(/^\/+/, '')}`
     }
     if (file.downloadId) {
-      return `${backendUrl}/download/${encodeURIComponent(file.downloadId)}`
+      return `${normalizedBackendUrl}/download/${encodeURIComponent(file.downloadId)}`
     }
     return ''
   }
 
   async function downloadSingleFile(file: FileItem, backendUrl: string): Promise<void> {
     const url = buildDownloadUrl(file, backendUrl)
-    if (!url) return
+    if (!url) throw new Error('No download URL available')
+    const normalizedBackendUrl = normalizeBackendUrl(backendUrl)
+    const isExternalUrl = /^https?:\/\//i.test(url) && !url.startsWith(normalizedBackendUrl)
+
+    if (isExternalUrl) {
+      const link = document.createElement('a')
+      link.href = url
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      return
+    }
+
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Download failed: ${res.status}`)
     const blob = await res.blob()
     const objectUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = objectUrl
-    a.download = file.filename || 'output.docx'
+    a.download = getOutputFilename(file)
     document.body.appendChild(a)
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
   }
 
+  async function handleSingleDownload(file: FileItem) {
+    try {
+      await downloadSingleFile(file, settings.backendUrl)
+      addLog(`Downloaded: ${getOutputFilename(file)}`)
+      showToast(`Downloading ${getOutputFilename(file)}...`)
+    } catch {
+      addLog(`Download failed: ${file.name}`)
+      showToast(`Download failed: ${file.name}`)
+    }
+  }
+
   // ── Download ────────────────────────────────────────────────
   const downloadFiles = async () => {
-    const successFiles = files.filter(f => f.status === 'success' && (f.downloadUrl || f.downloadId))
-    if (successFiles.length === 0) {
+    const downloadableFiles = files.filter(isDownloadable)
+    if (downloadableFiles.length === 0) {
       showToast('No processed files to download')
       return
     }
-    for (const file of successFiles) {
+    for (const file of downloadableFiles) {
       try {
         await downloadSingleFile(file, settings.backendUrl)
-        addLog(`Downloaded: ${file.filename}`)
+        addLog(`Downloaded: ${getOutputFilename(file)}`)
       } catch (err) {
         addLog(`Download failed: ${file.filename}`)
       }
     }
-    showToast(`Downloading ${successFiles.length} file(s)...`)
+    showToast(`Downloading ${downloadableFiles.length} file(s)...`)
   }
 
   // Persist settings
@@ -258,7 +302,7 @@ export default function App() {
   // ── Process ────────────────────────────────────────────────
   const processFiles = async () => {
     if (files.length === 0) { showToast('No files to process'); return }
-    const toProcess = files.filter(f => f.status !== 'success')
+    const toProcess = files.filter(f => !isDownloadable(f) && f.status !== 'success')
     if (toProcess.length === 0) { showToast('All files already processed'); return }
 
     // Pre-flight check: which providers are available?
@@ -344,8 +388,8 @@ export default function App() {
                 status: newStatus,
                 message: result.message,
                 filename: result.suggestedName
-                  ? `${result.suggestedName}${f.name.substring(f.name.lastIndexOf('.'))}`
-                  : f.filename,
+                  ? stripExtension(result.suggestedName)
+                  : stripExtension(f.filename),
                 downloadId: result.downloadId ?? undefined,
                 downloadUrl: result.downloadUrl ?? undefined,
               }
@@ -400,8 +444,9 @@ export default function App() {
 
   // ── Summary ────────────────────────────────────────────────
   const total = files.length
-  const success = files.filter(f => f.status === 'success').length
-  const errors = files.filter(f => f.status === 'error' || f.status === 'partial').length
+  const downloadable = files.filter(isDownloadable).length
+  const success = files.filter(f => f.status === 'success' || (f.status === 'partial' && isDownloadable(f))).length
+  const errors = files.filter(f => f.status === 'error' || (f.status === 'partial' && !isDownloadable(f))).length
   const pending = files.filter(f => f.status === 'pending').length
 
   return (
@@ -506,7 +551,7 @@ export default function App() {
                     borderRadius: 4,
                     padding: '2px 6px',
                     fontFamily: 'inherit',
-                    background: f.status === 'success' ? '#D1FAE5' : '#FEF9C3',
+                    background: isDownloadable(f) ? '#D1FAE5' : '#FEF9C3',
                     outline: 'none',
                   }}
                   title="Output filename"
@@ -520,6 +565,15 @@ export default function App() {
                 {f.status === 'partial' && `⚠ ${f.message}`}
                 {f.status === 'pending' && '○ Pending'}
               </span>
+              {isDownloadable(f) && (
+                <button
+                  className="btn btn-download-inline"
+                  onClick={() => void handleSingleDownload(f)}
+                  disabled={processing}
+                >
+                  Download
+                </button>
+              )}
             </div>
           ))}
 
@@ -535,10 +589,10 @@ export default function App() {
             </button>
             <button
               className="btn"
-              disabled={processing || success === 0}
+              disabled={processing || downloadable === 0}
               onClick={downloadFiles}
             >
-              Download ({success})
+              Download ({downloadable})
             </button>
             <div className="progress-area">
               <div className="progress-text">

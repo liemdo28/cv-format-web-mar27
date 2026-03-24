@@ -730,7 +730,8 @@ async def process_cv(
 
         # Generate unique download ID and path
         download_id = str(uuid.uuid4())[:8]
-        safe_name = re.sub(r'[^\w\s.-]', '', file.filename or "cv").strip()
+        base_output_name = suggested_name or os.path.splitext(file.filename or "cv")[0]
+        safe_name = re.sub(r'[^\w\s.-]', '', base_output_name).strip() or "cv"
         safe_name = re.sub(r'\s+', '_', safe_name)
         output_dir = os.path.join(OUTPUT_DIR, download_id)
         os.makedirs(output_dir, exist_ok=True)
@@ -763,8 +764,10 @@ async def process_cv(
 
         if not drive_download_url:
             return ProcessResponse(
-                status="error",
-                message="Google Drive upload failed — cannot generate download link. Please contact support."
+                status="partial",
+                message="DOCX generated locally. Google Drive upload failed, but you can still use the Download button.",
+                suggestedName=suggested_name,
+                downloadId=download_id,
             )
 
         return ProcessResponse(

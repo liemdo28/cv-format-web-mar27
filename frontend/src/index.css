@@ -244,6 +244,10 @@ body {
   background: #FEF3C7;
 }
 
+.file-item.partial {
+  background: #FEF3C7;
+}
+
 .file-num {
   color: #9CA3AF;
   font-size: 12px;
@@ -276,6 +280,12 @@ body {
 .status-error { color: var(--red); }
 .status-pending { color: #9CA3AF; }
 .status-processing { color: var(--amber); }
+.status-partial { color: var(--amber); }
+
+.btn-download-inline {
+  flex-shrink: 0;
+  min-width: 84px;
+}
 
 /* ── Summary + Log ── */
 .sidebar {
