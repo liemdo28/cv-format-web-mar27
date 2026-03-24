@@ -23,6 +23,67 @@ interface TrainingPanelProps {
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 
+/** Pair files by naming convention suffixes */
+function autoPairFiles(files: File[]): TrainingPair[] {
+  const pairs: TrainingPair[] = []
+  const rawSfx = ['_raw', '-raw', '_before', '-before', '_chua', '-chua', '_original', '-original']
+  const doneSfx = ['_done', '-done', '_after', '-after', '_formatted', '-formatted', '_chuẩn', '-chuẩn']
+
+  const isRaw = (name: string) =>
+    rawSfx.some(s => name.toLowerCase().includes(s))
+  const isDone = (name: string) =>
+    doneSfx.some(s => name.toLowerCase().includes(s))
+
+  // Strategy 1: explicit _raw / _done suffixes
+  const rawFiles = files.filter(f => isRaw(f.name))
+  const doneFiles = files.filter(f => isDone(f.name))
+
+  const baseOf = (name: string, sfx: string[]) => {
+    let n = name.toLowerCase()
+    for (const s of sfx) {
+      const idx = n.indexOf(s)
+      if (idx !== -1) return name.slice(0, idx)
+    }
+    return ''
+  }
+
+  const assigned = new Set<string>()
+
+  // Match raw → done by base name
+  for (const raw of rawFiles) {
+    const base = baseOf(raw.name, rawSfx)
+    if (!base) continue
+    const match = doneFiles.find(d => {
+      if (assigned.has(d.name)) return false
+      const dBase = baseOf(d.name, doneSfx)
+      return dBase === base || base === dBase
+    })
+    if (match) {
+      assigned.add(match.name)
+      pairs.push({ id: uid(), rawFile: raw, doneFile: match })
+    }
+  }
+
+  // Strategy 2: same filename with _raw / _done swapped (no explicit done suffix)
+  const unpairedFiles = files.filter(f => !assigned.has(f.name) && !isRaw(f.name) && !isDone(f.name))
+  const unpairedBases = new Map<string, File>()
+  for (const f of unpairedFiles) {
+    const base = f.name.replace(/\.[^.]+$/, '').toLowerCase()
+    unpairedBases.set(base, f)
+  }
+
+  // Strategy 3: pair by closest filename (remove _raw / _done from same-name base)
+  for (const f of files) {
+    if (assigned.has(f.name)) continue
+    const base = f.name.replace(/\.[^.]+$/, '').replace(/_raw|-raw|_done|-done|_before|-before|_after|-after/i, '').toLowerCase()
+    if (unpairedBases.has(base)) {
+      // f and base file could be pair — but we already matched in strategy 1
+    }
+  }
+
+  return pairs
+}
+
 export default function TrainingPanel({ backendUrl, onLog, onToast }: TrainingPanelProps) {
   const [pairs, setPairs] = useState<TrainingPair[]>([])
   const [dragTarget, setDragTarget] = useState<'raw' | 'done' | null>(null)
@@ -34,9 +95,13 @@ export default function TrainingPanel({ backendUrl, onLog, onToast }: TrainingPa
   const [showKnowledge, setShowKnowledge] = useState(false)
   const rawInputRef = useRef<HTMLInputElement>(null)
   const doneInputRef = useRef<HTMLInputElement>(null)
+  const bulkInputRef = useRef<HTMLInputElement>(null)
 
   const addPair = useCallback((raw: File, done: File) => {
-    setPairs(prev => [...prev, { id: uid(), rawFile: raw, doneFile: done }])
+    setPairs(prev => {
+      if (prev.some(p => p.rawFile.name === raw.name && p.doneFile.name === done.name)) return prev
+      return [...prev, { id: uid(), rawFile: raw, doneFile: done }]
+    })
     setTempRaw(null)
     setTempDone(null)
     setResult(null)
@@ -47,6 +112,22 @@ export default function TrainingPanel({ backendUrl, onLog, onToast }: TrainingPa
     setPairs(prev => prev.filter(p => p.id !== id))
     setResult(null)
   }, [])
+
+  const handleBulkImport = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const fileArr = Array.from(files).filter(f => /\.(pdf|docx)$/i.test(f.name))
+    if (fileArr.length < 2) {
+      onToast('Bulk import cần ít nhất 2 file PDF/DOCX')
+      return
+    }
+    const detected = autoPairFiles(fileArr)
+    if (detected.length === 0) {
+      onToast(`Không tìm thấy cặp raw/done. Đảm bảo file có suffix _raw/_done hoặc -raw/-done.`)
+      return
+    }
+    detected.forEach(p => addPair(p.rawFile, p.doneFile))
+    onToast(`Đã tự động ghép ${detected.length} cặp từ ${fileArr.length} file`)
+  }
 
   const handleRawFile = (file: File) => {
     if (!/\.(pdf|docx)$/i.test(file.name)) {
@@ -273,6 +354,24 @@ export default function TrainingPanel({ backendUrl, onLog, onToast }: TrainingPa
 
           {/* Actions */}
           <div className="training-actions">
+            <input
+              ref={bulkInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.docx"
+              style={{ display: 'none' }}
+              onChange={e => {
+                handleBulkImport(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <button
+              className="btn"
+              onClick={() => bulkInputRef.current?.click()}
+              disabled={training}
+            >
+              📦 Bulk Import
+            </button>
             <button
               className="btn btn-primary train-btn-main"
               onClick={runTraining}
