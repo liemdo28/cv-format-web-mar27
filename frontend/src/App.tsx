@@ -172,15 +172,19 @@ export default function App() {
 
   // ── Download ────────────────────────────────────────────────
   const downloadFiles = () => {
-    const successFiles = files.filter(f => f.status === 'success' && f.downloadId)
+    const successFiles = files.filter(f => f.status === 'success' && (f.downloadUrl || f.downloadId))
     if (successFiles.length === 0) {
       showToast('No processed files to download')
       return
     }
     successFiles.forEach((file, i) => {
       setTimeout(() => {
-        if (!file.downloadId) return
-        const url = `${settings.backendUrl}/download/${file.downloadId}`
+        let url = file.downloadUrl || ''
+        // If downloadUrl is a relative path (starts with /), prepend backend URL
+        if (url.startsWith('/')) {
+          url = `${settings.backendUrl}${url}`
+        }
+        if (!url) return
         const a = document.createElement('a')
         a.href = url
         a.download = file.filename || 'output.docx'
@@ -324,6 +328,7 @@ export default function App() {
                   ? `${result.suggestedName}${f.name.substring(f.name.lastIndexOf('.'))}`
                   : f.filename,
                 downloadId: result.downloadId ?? undefined,
+                downloadUrl: result.downloadUrl ?? undefined,
               }
             : f
         ))

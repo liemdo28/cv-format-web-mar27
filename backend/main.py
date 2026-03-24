@@ -21,6 +21,8 @@ import anthropic
 import openai
 import uuid
 
+from drive_utils import upload_file, HAS_GDRIVE
+
 app = FastAPI(title="CV Format Tool API")
 
 app.add_middleware(
@@ -37,6 +39,12 @@ TEMPLATE_EN = os.path.join(BASE_DIR, "templates", "Form EN 2024.docx")
 TEMPLATE_VN = os.path.join(BASE_DIR, "templates", "Form VN 2024.docx")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Google Drive settings
+GDRIVE_REFRESH_TOKEN = os.environ.get("GOOGLE_DRIVE_REFRESH_TOKEN", "")
+GDRIVE_CLIENT_ID = os.environ.get("GOOGLE_DRIVE_CLIENT_ID", "")
+GDRIVE_CLIENT_SECRET = os.environ.get("GOOGLE_DRIVE_CLIENT_SECRET", "")
+GDRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
 
 # Copy templates from parent project if not present
 PARENT_TEMPLATES = os.path.join(BASE_DIR, "..", "..", "..", "inform-resume", "templates")
@@ -737,12 +745,26 @@ async def process_cv(
                 message=f"Template fill failed: {str(e)}"
             )
 
+        # Upload to Google Drive
+        drive_download_url = None
+        if GDRIVE_FOLDER_ID and GDRIVE_REFRESH_TOKEN and GDRIVE_CLIENT_ID and GDRIVE_CLIENT_SECRET:
+            drive_download_url = upload_file(
+                file_path=output_docx,
+                filename=f"{safe_name}.docx",
+                folder_id=GDRIVE_FOLDER_ID,
+                refresh_token=GDRIVE_REFRESH_TOKEN,
+                client_id=GDRIVE_CLIENT_ID,
+                client_secret=GDRIVE_CLIENT_SECRET,
+            )
+            if drive_download_url:
+                print(f"[GDrive] Uploaded: {safe_name}.docx -> {drive_download_url}")
+
         return ProcessResponse(
             status="success",
             message=f"Generated ({lang.upper()} template)",
             suggestedName=suggested_name,
             downloadId=download_id,
-            downloadUrl=f"/download/{download_id}"
+            downloadUrl=drive_download_url or f"/download/{download_id}"
         )
 
     finally:

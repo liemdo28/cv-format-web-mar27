@@ -7,6 +7,7 @@ export interface FileItem {
   message: string
   file?: File
   downloadId?: string
+  downloadUrl?: string
 }
 
 export interface Settings {
