@@ -27,7 +27,7 @@ from db import init_db, get_db_session, User, CVJob, CVVersion, AuditLog
 from auth import (
     hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
-    get_current_user, require_role, require_permission,
+    get_current_user, require_role, require_permission, has_permission,
     CurrentUser, log_action, ALLOWED_ROLES,
 )
 from validation import validate_cv_data, sanitize_for_export, ValidationResult
@@ -507,6 +507,18 @@ async def export_job(
                 status_code=400,
                 detail=f"Cannot export job in status: {job.status}. Job must be QC-approved.",
             )
+
+        # Run validation to detect blocking errors
+        validation = validate_cv_data(cv_data)
+        if not validation.is_valid:
+            if not has_permission(current_user.role, "cv:override_export"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "CV has blocking validation errors and you do not have "
+                        "permission to override. Fix the errors first or contact a QC/Admin."
+                    ),
+                )
 
         # Use reviewed data if available, otherwise parsed data
         cv_data = job.reviewed_data or job.parsed_data

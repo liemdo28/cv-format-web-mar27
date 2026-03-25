@@ -40,9 +40,9 @@ class BatchJob:
     id: str
     batch_id: str
     original_filename: str
-    file_path: str        # Temp path to uploaded file
     file_type: str        # pdf | docx
     file_size: int        # bytes
+    file_path: str = ""   # Temp path to uploaded file (optional for tests)
     status: str = JobStatus.QUEUED
     extraction_mode: str = "auto"
     progress: float = 0.0  # 0.0 - 1.0

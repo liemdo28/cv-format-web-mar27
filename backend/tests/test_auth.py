@@ -28,9 +28,9 @@ class TestPasswordHashing:
     def test_hash_contains_salt_and_hash(self):
         h = hash_password("secret123")
         assert "$" in h
+        # bcrypt format: $2b$12$saltvalue$hashvalue  (4 $ parts)
         parts = h.split("$")
-        assert len(parts) == 2
-        assert len(parts[0]) == 32  # 16 hex bytes = 32 chars
+        assert len(parts) == 4
 
     def test_verify_correct_password(self):
         h = hash_password("admin123")
@@ -71,20 +71,20 @@ class TestJWTTokens:
 
     def test_decode_expired_token_raises(self):
         import jwt, time
-        from fastapi import HTTPException
+        import auth as auth_module
         old_token = jwt.encode(
             {"sub": "x", "type": "access", "iat": int(time.time()) - 10000, "exp": int(time.time()) - 100},
             os.environ.get("JWT_SECRET", "__test_secret__"),
             algorithm="HS256"
         )
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(auth_module._HTTPException) as exc_info:
             decode_token(old_token)
         assert exc_info.value.status_code == 401
         assert "expired" in exc_info.value.detail.lower()
 
     def test_decode_invalid_token_raises(self):
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
+        import auth as auth_module
+        with pytest.raises(auth_module._HTTPException) as exc_info:
             decode_token("not.a.valid.jwt")
         assert exc_info.value.status_code == 401
 

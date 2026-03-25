@@ -40,8 +40,14 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relations
-    cv_jobs = relationship("CVJob", back_populates="owner", cascade="all, delete-orphan")
-    qc_jobs = relationship("CVJob", foreign_keys="CVJob.qc_by", back_populates="qc_reviewer")
+    cv_jobs = relationship(
+        "CVJob", foreign_keys="CVJob.owner_id",
+        back_populates="owner", cascade="all, delete-orphan",
+    )
+    qc_jobs = relationship(
+        "CVJob", foreign_keys="CVJob.qc_by",
+        back_populates="qc_reviewer",
+    )
 
     def to_dict(self, safe: bool = True) -> dict[str, Any]:
         d = {
@@ -271,7 +277,7 @@ def init_db():
 
 def _seed_default_admin():
     """Create default admin if not exists."""
-    from auth import hash_password, verify_password
+    from auth import hash_password
     with get_db_session() as session:
         existing = session.query(User).filter(User.role == "admin").first()
         if not existing:

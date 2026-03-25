@@ -140,6 +140,7 @@ class TestParallelProcessing:
         assert proc._executor is not None
         proc.shutdown(wait=True)
 
+    @pytest.mark.slow
     def test_submit_single_job(self, temp_cv_file):
         """Submit one real CV job."""
         proc = BatchProcessor(max_workers=1)
@@ -178,6 +179,7 @@ class TestParallelProcessing:
         assert final_job.status in (JobStatus.COMPLETED, JobStatus.REVIEW, JobStatus.FAILED)
         proc.shutdown(wait=True)
 
+    @pytest.mark.slow
     def test_multiple_jobs_process_in_parallel(self, temp_cv_file):
         """3 jobs should finish faster than 3× single job time."""
         proc = BatchProcessor(max_workers=3)

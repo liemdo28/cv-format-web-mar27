@@ -78,6 +78,8 @@ interface ReviewPanelProps {
   onSave: (correctedData: ParsedCVData) => void
   onApprove: (correctedData: ParsedCVData) => void
   isSubmitting: boolean
+  /** Role of the current user — controls approve permission. */
+  userRole?: 'admin' | 'staff' | 'qc'
 }
 
 // ── Sub-components ────────────────────────────────────────────────
@@ -221,6 +223,7 @@ export default function ReviewPanel({
   onSave,
   onApprove,
   isSubmitting,
+  userRole = 'staff',
 }: ReviewPanelProps) {
   const [data, setData] = useState<ParsedCVData | null>(null)
   const [activeTab, setActiveTab] = useState<'fields' | 'errors' | 'preview'>('fields')
@@ -230,31 +233,59 @@ export default function ReviewPanel({
   const currentData = data ?? reviewData?.parsed_data ?? {}
   const validation = reviewData?.validation_result
 
+  /**
+   * Recursive path setter for arbitrary-depth paths like:
+   *   career_summary[0].company
+   *   career_summary[0].positions[1].responsibilities
+   *   other_info[2].items
+   *
+   * Handles array-leaf fields (responsibilities, details, items) by
+   * splitting the multiline string into a string[] and storing that.
+   */
   const updateField = useCallback((path: string, value: string) => {
     setData(prev => {
       const base = prev ?? { ...(reviewData?.parsed_data ?? {}) }
-      const updated = structuredClone(base)
-      // Simple path update: "career_summary[0].company"
-      const match = path.match(/^([^\[]+)(?:\[(\d+)\])?(.*)$/)
-      if (!match) return updated
-      const [, key, idxStr, rest] = match
-      if (idxStr !== undefined) {
-        const idx = parseInt(idxStr)
-        const arr = (updated as any)[key] ?? []
-        if (Array.isArray(arr)) {
-          const item = { ...arr[idx] }
-          if (rest) {
-            const subKey = rest.replace('.', '')
-            item[subKey] = value
-          } else {
-            return updated
-          }
-          arr[idx] = item
-          ;(updated as any)[key] = arr
+      const updated = JSON.parse(JSON.stringify(base)) as ParsedCVData
+
+      // Tokenise: ["career_summary", 0, "positions", 1, "responsibilities"]
+      const tokens: (string | number)[] = []
+      const parts = path.split('.')
+      for (const part of parts) {
+        const idxMatch = part.match(/^([^\[]+)\[(\d+)\]$/)
+        if (idxMatch) {
+          tokens.push(idxMatch[1], parseInt(idxMatch[2], 10))
+        } else {
+          tokens.push(part)
         }
-      } else {
-        ;(updated as any)[key] = value
       }
+
+      if (tokens.length === 0) return updated
+
+      // Navigate to parent container
+      let node: any = updated
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const t = tokens[i]
+        if (typeof t === 'number') {
+          node = node[t]
+        } else {
+          node = (node as any)[t]
+        }
+        if (!node) return updated
+      }
+
+      const last = tokens[tokens.length - 1]
+      if (typeof last !== 'string') return updated
+
+      // Determine if the target field is an array-type (responsibilities / details / items)
+      const arrayFields = new Set(['responsibilities', 'details', 'items'])
+      if (arrayFields.has(last) && value.trim() !== '') {
+        // Split multiline string into string[] — one item per non-empty line
+        const lines = value.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+        ;(node as any)[last] = lines
+      } else {
+        ;(node as any)[last] = value
+      }
+
       return updated
     })
     setHasEdits(true)
@@ -265,6 +296,14 @@ export default function ReviewPanel({
   const errorCount = validation?.error_count ?? 0
   const warnCount = validation?.warning_count ?? 0
   const isExportable = validation?.is_exportable ?? false
+  const hasErrors = errorCount > 0
+
+  // Role-aware approve logic:
+  // - staff : can export only when there are NO errors (warnings are OK)
+  // - qc/ad : can override and export even with warnings (cv:override_export)
+  const canOverride = userRole === 'qc' || userRole === 'admin'
+  const canApprove = !hasErrors || canOverride
+  const isOverride = hasErrors && canOverride
 
   return (
     <div style={{
@@ -305,7 +344,7 @@ export default function ReviewPanel({
             )}
             {!isExportable && (
               <span style={{ background: '#DC2626', color: '#fff', borderRadius: 8, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>
-                ⚠️ CHƯA ĐƯỢC PHÊ DUYỆT
+                {canOverride ? '⚠️ CẢNH BÁO' : '🔒 CHƯA PHÊ DUYỆT'}
               </span>
             )}
             <button
@@ -508,12 +547,16 @@ export default function ReviewPanel({
             <button
               className="btn btn-primary"
               onClick={() => onApprove(currentData)}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canApprove}
               style={{
-                background: isExportable ? '#10B981' : '#9CA3AF',
+                background: hasErrors
+                  ? (canOverride ? '#F59E0B' : '#9CA3AF')
+                  : '#10B981',
               }}
             >
-              {isSubmitting ? '⏳...' : isExportable ? '✅ Phê duyệt & Export' : '⚠️ Phê duyệt (có cảnh báo)'}
+              {isSubmitting ? '⏳...' : hasErrors ? (
+                canOverride ? '⚠️ Phê duyệt & Export (override)' : '🔒 Cần QC/Admin phê duyệt'
+              ) : '✅ Phê duyệt & Export'}
             </button>
           </div>
         </div>

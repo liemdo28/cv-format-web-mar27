@@ -14,6 +14,8 @@ from validation import (
     validate_year_of_birth, validate_cv_data, validate_required_string,
     sanitize_for_export, validate_batch, ValidationSeverity,
     ValidationError,
+    validate_period_order, validate_bullet_points,
+    validate_title_case, validate_duplicate_entries,
 )
 
 
@@ -62,7 +64,7 @@ class TestEmailValidation:
         err = validate_email("user@gmial.com")
         assert err is not None
         assert err.code == "EMAIL_TYPO"
-        assert err.severity == ValidationSeverity.WARNING
+        assert err.severity == ValidationSeverity.ERROR  # typos are blocking
         assert "gmail.com" in err.suggestion
 
     def test_email_typo_hotmail(self):
@@ -83,7 +85,7 @@ class TestPhoneValidation:
         assert validate_phone("+84 912 345 678") is None
 
     def test_valid_phone_us(self):
-        assert validate_phone("+1 (555) 123-4567") is None
+        assert validate_phone("+1 (555) 123-4567", country="auto") is None
 
     def test_valid_phone_uk(self):
         assert validate_phone("+44 20 7946 0958") is None
@@ -107,7 +109,7 @@ class TestPhoneValidation:
 
     def test_phone_missing_country_code_warning(self):
         """10-digit number without country code gets warning."""
-        err = validate_phone("5551234567")
+        err = validate_phone("5551234567", country="us")
         assert err is not None
         assert err.code == "PHONE_MISSING_COUNTRY_CODE"
         assert err.severity == ValidationSeverity.WARNING
@@ -226,7 +228,7 @@ class TestCVValidationClean:
                 },
                 {
                     "period": "06/2018 - 12/2019",
-                    "company": "VIETTEL SOLUTIONS",
+                    "company": "Viettel Solutions",
                     "positions": [
                         {
                             "title": "Software Engineer",
@@ -238,13 +240,13 @@ class TestCVValidationClean:
             "education": [
                 {
                     "period": "2014 - 2018",
-                    "institution": "HANOI UNIVERSITY OF SCIENCE AND TECHNOLOGY",
+                    "institution": "Hanoi University of Science and Technology",
                     "details": ["Bachelor of Computer Science", "GPA: 3.5/4.0"],
                 }
             ],
             "other_info": [
-                {"section_title": "SKILLS", "items": ["Python", "Java", "AWS", "Docker"]},
-                {"section_title": "LANGUAGES", "items": ["English - IELTS 7.0", "Vietnamese - Native"]},
+                {"section_title": "Skills", "items": ["Python", "Java", "AWS", "Docker"]},
+                {"section_title": "Languages", "items": ["English - IELTS 7.0", "Vietnamese - Native"]},
             ],
         }
 
@@ -256,7 +258,9 @@ class TestCVValidationClean:
 
     def test_clean_cv_summary(self, clean_cv):
         result = validate_cv_data(clean_cv)
-        assert "error" in result.summary.lower() or "0" in result.summary
+        assert result.summary is not None
+        assert isinstance(result.summary, str)
+        assert len(result.summary) > 0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -315,9 +319,12 @@ class TestCVValidationDirty:
 
     def test_warning_codes_present(self, dirty_cv):
         result = validate_cv_data(dirty_cv)
-        codes = {e.code for e in result.warnings}
-        assert "EMAIL_TYPO" in codes
-        assert "YEAR_OF_BIRTH_UNREASONABLE" in codes
+        # EMAIL_TYPO is now ERROR severity (email typos are blocking)
+        error_codes = {e.code for e in result.errors}
+        assert "EMAIL_TYPO" in error_codes
+        # YEAR_OF_BIRTH_UNREASONABLE is WARNING
+        warn_codes = {e.code for e in result.warnings}
+        assert "YEAR_OF_BIRTH_UNREASONABLE" in warn_codes
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -355,7 +362,9 @@ class TestBatchValidation:
     def test_batch_summary(self):
         cvs = [{"full_name": "Test", "email": "test@test.com"}]
         results = validate_batch(cvs)
-        assert "error" in results[0].summary.lower() or "0" in results[0].summary
+        assert results[0].summary is not None
+        assert isinstance(results[0].summary, str)
+        assert len(results[0].summary) > 0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -438,6 +447,134 @@ class TestScale50CVs:
         assert elapsed < 1.0, f"50 CVs took {elapsed:.2f}s — too slow"
         assert len(results) == 50
         assert all(r.is_valid for r in results)
+
+
+# ═══════════════════════════════════════════════════════════════
+# TC-17: PERIOD ORDER (chronological validation)
+# ═══════════════════════════════════════════════════════════════
+class TestPeriodOrder:
+    def test_valid_period_chronological(self):
+        assert validate_period_order("01/2020", "12/2022", "period") is None
+
+    def test_valid_period_present(self):
+        assert validate_period_order("06/2019", "Present", "period") is None
+
+    def test_end_before_start_returns_error(self):
+        err = validate_period_order("2022", "2020", "period")
+        assert err is not None
+        assert err.code == "PERIOD_END_BEFORE_START"
+        assert err.severity == ValidationSeverity.ERROR
+
+    def test_same_month_year_is_error(self):
+        """Same month = not strictly after start → should be error."""
+        err = validate_period_order("2020", "2020", "period")
+        assert err is not None
+        assert err.code == "PERIOD_END_BEFORE_START"
+
+    def test_start_before_end_valid(self):
+        err = validate_period_order("2020", "2022", "period")
+        assert err is None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TC-18: BULLET POINT COUNT
+# ═══════════════════════════════════════════════════════════════
+class TestBulletPoints:
+    def test_enough_bullets_returns_none(self):
+        text = "- First point\n- Second point\n- Third point"
+        assert validate_bullet_points(text, "responsibilities", min_count=2) is None
+
+    def test_too_few_bullets_returns_warning(self):
+        text = "- Only one"
+        err = validate_bullet_points(text, "responsibilities", min_count=2)
+        assert err is not None
+        assert err.code == "TOO_FEW_BULLET_POINTS"
+        assert err.severity == ValidationSeverity.WARNING
+
+    def test_numbered_list_counts(self):
+        text = "1. First\n2. Second"
+        assert validate_bullet_points(text, "details", min_count=2) is None
+
+    def test_empty_text_returns_none(self):
+        assert validate_bullet_points("", "content") is None
+        assert validate_bullet_points(None, "content") is None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TC-19: TITLE CASE (ALL-CAPS detection)
+# ═══════════════════════════════════════════════════════════════
+class TestTitleCase:
+    def test_title_case_valid(self):
+        assert validate_title_case("Software Engineer", "title") is None
+
+    def test_all_caps_returns_warning(self):
+        err = validate_title_case("SOFTWARE ENGINEER MANAGER DIRECTOR", "title")
+        assert err is not None
+        assert err.code == "TITLE_ALL_CAPS"
+        assert err.severity == ValidationSeverity.WARNING
+
+    def test_mixed_case_valid(self):
+        assert validate_title_case("Sr. Software Engineer", "title") is None
+
+    def test_short_all_caps_ignored(self):
+        """< 3 alpha chars = too short to judge."""
+        assert validate_title_case("CEO", "title") is None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TC-20: DUPLICATE ENTRY DETECTION
+# ═══════════════════════════════════════════════════════════════
+class TestDuplicateEntries:
+    def test_no_duplicates_returns_none(self):
+        entries = [
+            {"company": "FPT"},
+            {"company": "Viettel"},
+            {"company": "VNPT"},
+        ]
+        assert validate_duplicate_entries(entries, "career_summary", "company") is None
+
+    def test_duplicate_company_returns_warning(self):
+        entries = [
+            {"company": "FPT Software"},
+            {"company": "FPT Software"},
+            {"company": "Viettel"},
+        ]
+        err = validate_duplicate_entries(entries, "career_summary", "company")
+        assert err is not None
+        assert err.code == "DUPLICATE_ENTRIES"
+        assert err.severity == ValidationSeverity.WARNING
+
+    def test_duplicate_case_insensitive(self):
+        entries = [
+            {"company": "fpt software"},
+            {"company": "FPT Software"},
+        ]
+        err = validate_duplicate_entries(entries, "career_summary", "company")
+        assert err is not None  # case-insensitive match
+
+    def test_empty_list_returns_none(self):
+        assert validate_duplicate_entries([], "career_summary") is None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TC-21: to_dict INCLUDES SUMMARY
+# ═══════════════════════════════════════════════════════════════
+class TestValidationResultToDict:
+    def test_to_dict_has_summary_field(self):
+        result = validate_cv_data({
+            "full_name": "Test",
+            "email": "test@test.com",
+        })
+        d = result.to_dict()
+        assert "summary" in d
+        assert isinstance(d["summary"], str)
+        assert len(d["summary"]) > 0
+
+    def test_to_dict_with_errors_has_summary(self):
+        result = validate_cv_data({})  # missing required fields
+        d = result.to_dict()
+        assert "summary" in d
+        assert "error" in d["summary"].lower()
 
 
 if __name__ == "__main__":

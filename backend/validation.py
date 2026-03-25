@@ -6,7 +6,7 @@ Used BEFORE template fill to prevent bad CVs from reaching clients.
 
 import re
 from typing import Any
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -35,15 +35,33 @@ class ValidationResult:
     warnings: list[ValidationError] = field(default_factory=list)
     info: list[ValidationError] = field(default_factory=list)
 
+    @property
+    def error_count(self) -> int:
+        return len(self.errors)
+
+    @property
+    def warning_count(self) -> int:
+        return len(self.warnings)
+
     def to_dict(self) -> dict[str, Any]:
+        def err_dict(e: ValidationError) -> dict[str, Any]:
+            return {
+                "field": e.field,
+                "code": e.code,
+                "message": e.message,
+                "severity": e.severity,
+                "value": e.value,
+                "suggestion": e.suggestion,
+            }
         return {
             "is_valid": self.is_valid,
             "is_exportable": self.is_exportable,
-            "errors": [asdict(e) for e in self.errors],
-            "warnings": [asdict(w) for w in self.warnings],
-            "info": [asdict(i) for i in self.info],
+            "errors": [err_dict(e) for e in self.errors],
+            "warnings": [err_dict(w) for w in self.warnings],
+            "info": [err_dict(i) for i in self.info],
             "error_count": len(self.errors),
             "warning_count": len(self.warnings),
+            "summary": self.summary,
         }
 
     @property
@@ -90,7 +108,7 @@ def validate_email(value: str) -> ValidationError | None:
                 field="email",
                 code="EMAIL_TYPO",
                 message=f"Email có thể bị đánh máy: '{value}' — ý bạn là {fix}?",
-                severity=ValidationSeverity.WARNING,
+                severity=ValidationSeverity.ERROR,
                 value=value,
                 suggestion=f"Sửa thành: {value.lower().replace(typo, fix)}",
             )
@@ -128,6 +146,11 @@ def validate_phone(value: str, country: str = "auto") -> ValidationError | None:
 
     # Check country code presence
     has_country_code = original.startswith("+") or original.startswith("0")
+
+    # Skip VN auto-check for numbers with a known non-VN country code
+    NON_VN_PREFIXES = ("+1", "+44", "+65", "+61", "+49", "+33", "+81", "+82", "+86", "+7")
+    if country == "auto" and original.strip().startswith(NON_VN_PREFIXES):
+        country = "us"  # treat as non-VN
 
     # Vietnam format: 0xxx xxx xxx or +84 xxx xxx xxx
     if country == "vn" or (country == "auto" and len(digits_only) in (10, 11)):
@@ -281,6 +304,163 @@ def validate_url(value: str, field_name: str = "linkedin_url") -> ValidationErro
     return None
 
 
+# ── Business-rule validators ──────────────────────────────────────
+
+def validate_period_order(
+    start_str: str, end_str: str, field_path: str = "period"
+) -> ValidationError | None:
+    """
+    Check that period end date is AFTER start date.
+    Accepts MM/YYYY or YYYY formats.
+    Returns ERROR if end ≤ start (chronological inversion).
+    """
+    if not start_str or not end_str:
+        return None
+
+    def parse_date(s: str) -> tuple[int, int] | None:
+        s = s.strip()
+        # MM/YYYY
+        m = re.match(r"^(\d{2})/(\d{4})$", s)
+        if m:
+            return (int(m.group(2)), int(m.group(1)))  # (year, month)
+        # YYYY
+        m = re.match(r"^(\d{4})$", s)
+        if m:
+            return (int(m.group(1)), 1)
+        return None
+
+    def is_present(s: str) -> bool:
+        return s.strip().lower() in {
+            "present", "tới nay", "hiện tại", "now", "current",
+        }
+
+    start = parse_date(start_str)
+    end_raw = end_str.strip()
+
+    # Present is always valid as end
+    if is_present(end_raw):
+        return None
+
+    end = parse_date(end_raw)
+    if start is None:
+        return None  # let validate_date_format catch bad format
+    if end is None:
+        return None  # let validate_date_format catch bad format
+    if end <= start:
+        return ValidationError(
+            field=field_path,
+            code="PERIOD_END_BEFORE_START",
+            message=(
+                f"Thời gian không hợp lý: bắt đầu '{start_str}' "
+                f"nhưng kết thúc '{end_str}' (kết thúc phải sau bắt đầu)"
+            ),
+            severity=ValidationSeverity.ERROR,
+            value=f"{start_str} → {end_str}",
+            suggestion=f"Đổi thứ tự: dùng '{start_str} – Present' nếu đang làm",
+        )
+    return None
+
+
+def validate_bullet_points(
+    text: str, field_path: str = "content", min_count: int = 2
+) -> ValidationError | None:
+    """
+    Check that a free-text field contains at least `min_count` bullet points.
+    Bullet markers detected: • - * — and numbered lists (1. 2.)
+    Returns WARNING if too few bullets found.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    # Count bullet-like lines
+    bullet_pattern = r"^\s*(?:[•\-\*–]|\d+\.)\s+"
+    count = len(re.findall(bullet_pattern, text, re.MULTILINE))
+
+    if count < min_count:
+        return ValidationError(
+            field=field_path,
+            code="TOO_FEW_BULLET_POINTS",
+            message=(
+                f"Ít bullet points: chỉ có {count} bullet "
+                f"(nên có ít nhất {min_count})"
+            ),
+            severity=ValidationSeverity.WARNING,
+            value=text[slice(0, 200)],
+            suggestion=f"Thêm bullet points để CV đầy đủ chi tiết hơn",
+        )
+    return None
+
+
+def validate_title_case(
+    value: str, field_path: str = "title"
+) -> ValidationError | None:
+    """
+    Check that a title/name field doesn't use ALL-CAPS.
+    ALL-CAPS is discouraged in professional CVs.
+    Returns WARNING if >70% of letters are uppercase.
+    """
+    if not value or not isinstance(value, str):
+        return None
+
+    alpha = re.sub(r"[^a-zA-Z]", "", value)
+    if len(alpha) < 4:
+        return None
+
+    upper_ratio = sum(1 for c in alpha if c.isupper()) / len(alpha)
+    if upper_ratio > 0.7:
+        return ValidationError(
+            field=field_path,
+            code="TITLE_ALL_CAPS",
+            message=f"Tiêu đề dùng chữ HOA: '{value}' — nên dùng Title Case",
+            severity=ValidationSeverity.WARNING,
+            value=value,
+            suggestion="Dùng 'Software Engineer' thay vì 'SOFTWARE ENGINEER'",
+        )
+    return None
+
+
+def validate_duplicate_entries(
+    entries: list[dict[str, Any]], field_path: str, key: str = "company"
+) -> ValidationError | None:
+    """
+    Detect duplicate entries in a list (e.g. same company appearing twice).
+    Returns WARNING if exact duplicates are found.
+    """
+    if not entries or not isinstance(entries, list):
+        return None
+
+    seen: dict[str, list[int]] = {}
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        val = entry.get(key, "")
+        if not val or not isinstance(val, str):
+            continue
+        val_clean = val.strip().lower()
+        if val_clean not in seen:
+            seen[val_clean] = []
+        seen[val_clean].append(i)
+
+    duplicates = {v: idxs for v, idxs in seen.items() if len(idxs) > 1}
+    if not duplicates:
+        return None
+
+    first_key = next(iter(duplicates))
+    indices = duplicates[first_key]
+    example_val = entries[indices[0]].get(key, "")
+    return ValidationError(
+        field=field_path,
+        code="DUPLICATE_ENTRIES",
+        message=(
+            f"Phát hiện mục trùng lặp: '{example_val}' xuất hiện "
+            f"{len(indices)} lần tại {field_path}"
+        ),
+        severity=ValidationSeverity.WARNING,
+        value=[entries[i].get(key, "") for i in indices],
+        suggestion=f"Gộp hoặc xóa các mục trùng lặp trong {field_path}",
+    )
+
+
 # ── Full CV validator ─────────────────────────────────────────────
 
 def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> ValidationResult:
@@ -341,15 +521,27 @@ def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> Validatio
             suggestion="Thêm ít nhất 1 mục kinh nghiệm làm việc",
         ))
     else:
+        # Check for duplicate companies across all career entries
+        dup_err = validate_duplicate_entries(career, "career_summary", key="company")
+        if dup_err:
+            warnings.append(dup_err)
+
         for i, job in enumerate(career):
             job_path = f"career_summary[{i}]"
 
-            # Period format
+            # Period format + logical order check
             period = job.get("period", "")
             if period:
                 err = validate_date_format(period, f"{job_path}.period")
                 if err:
                     warnings.append(err)
+                # Extract start/end and check chronological order
+                parts = re.split(r"\s*[-–]\s*", period, maxsplit=1)
+                if len(parts) == 2:
+                    start_s, end_s = parts[0].strip(), parts[1].strip()
+                    err = validate_period_order(start_s, end_s, f"{job_path}.period")
+                    if err:
+                        errors.append(err)
 
             # Company
             company = job.get("company", "")
@@ -361,6 +553,11 @@ def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> Validatio
                     severity=ValidationSeverity.WARNING,
                     suggestion=f"Thêm tên công ty cho job #{i+1}",
                 ))
+
+            # Title case check on company name
+            cap_err = validate_title_case(company, f"{job_path}.company")
+            if cap_err:
+                warnings.append(cap_err)
 
             # Positions
             positions = job.get("positions", [])
@@ -385,11 +582,37 @@ def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> Validatio
                         suggestion=f"Thêm chức danh (title) cho position #{j+1}",
                     ))
 
+                # Title case check on position title
+                cap_err = validate_title_case(pos_title, f"{pos_path}.title")
+                if cap_err:
+                    warnings.append(cap_err)
+
+                # Period order check
                 pos_period = pos.get("period", "")
                 if pos_period:
                     err = validate_date_format(pos_period, f"{pos_path}.period")
                     if err:
                         warnings.append(err)
+                    parts = re.split(r"\s*[-–]\s*", pos_period, maxsplit=1)
+                    if len(parts) == 2:
+                        start_s, end_s = parts[0].strip(), parts[1].strip()
+                        err = validate_period_order(start_s, end_s, f"{pos_path}.period")
+                        if err:
+                            errors.append(err)
+
+                # Bullet point count for responsibilities
+                responsibilities = pos.get("responsibilities", "")
+                if responsibilities and isinstance(responsibilities, str):
+                    err = validate_bullet_points(responsibilities, f"{pos_path}.responsibilities", min_count=2)
+                    if err:
+                        warnings.append(err)
+
+            # Fallback: top-level responsibilities bullet check
+            fallback_resp = job.get("responsibilities", "")
+            if fallback_resp and isinstance(fallback_resp, str) and (not positions or not any(p.get("responsibilities") for p in positions)):
+                err = validate_bullet_points(fallback_resp, f"{job_path}.responsibilities", min_count=2)
+                if err:
+                    warnings.append(err)
 
     # 6. Education
     education = cv_data.get("education", [])
