@@ -415,9 +415,9 @@ async def review_job(
         # Update job
         job.reviewed_data = clean_data
         job.reviewed_at = datetime.utcnow()
-        job.reviewed_data = clean_data
         job.validation_errors = val_result.to_dict().get("errors")
-        job.status = "qc" if current_user.role in ("qc", "admin") else "qc"
+        # QC/Admin can send directly to QC approval; staff send back to review for QC
+        job.status = "qc" if current_user.role in ("qc", "admin") else "review"
 
         session.commit()
 
@@ -508,7 +508,12 @@ async def export_job(
                 detail=f"Cannot export job in status: {job.status}. Job must be QC-approved.",
             )
 
-        # Run validation to detect blocking errors
+        # Use reviewed data if available, otherwise parsed data
+        cv_data = job.reviewed_data or job.parsed_data
+        if not cv_data:
+            raise HTTPException(status_code=400, detail="No CV data to export")
+
+        # Run validation on the actual data we're about to export
         validation = validate_cv_data(cv_data)
         if not validation.is_valid:
             if not has_permission(current_user.role, "cv:override_export"):
@@ -519,11 +524,6 @@ async def export_job(
                         "permission to override. Fix the errors first or contact a QC/Admin."
                     ),
                 )
-
-        # Use reviewed data if available, otherwise parsed data
-        cv_data = job.reviewed_data or job.parsed_data
-        if not cv_data:
-            raise HTTPException(status_code=400, detail="No CV data to export")
 
         lang = _detect_language(str(cv_data))
         template_path = TEMPLATE_VN if lang == "vi" else TEMPLATE_EN
@@ -649,11 +649,13 @@ async def get_batch_status(
     batch_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get batch processing status."""
+    """Get batch processing status. Staff can only see their own batches."""
     processor = get_processor()
     batch = processor.get_batch_status(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
+    if current_user.role == "staff" and batch.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     return batch.to_dict()
 
 @app.get("/batch/{batch_id}/jobs", tags=["batch"])
@@ -661,8 +663,11 @@ async def get_batch_jobs(
     batch_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get all jobs in a batch."""
+    """Get all jobs in a batch. Staff can only see their own batches."""
     processor = get_processor()
+    batch = processor.get_batch_status(batch_id)
+    if batch and current_user.role == "staff" and batch.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     jobs = processor.get_all_jobs(batch_id)
     return [j.to_dict() for j in jobs]
 
