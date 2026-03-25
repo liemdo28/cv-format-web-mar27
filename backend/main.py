@@ -38,7 +38,7 @@ from batch import (
 )
 
 # ── App Setup ───────────────────────────────────────────────────
-app = FastAPI(title="CV Format Tool API", version="2.0.0")
+app = FastAPI(title="CV Format Tool API", version="2.1.0")
 
 # ── CORS: Lock down to specific origins in production ───────────
 ALLOWED_ORIGINS = os.environ.get(
@@ -257,9 +257,19 @@ async def upload_cv(
             cv_text = _extract_text_from_docx(tmp_path)
 
         if not cv_text.strip():
+            # Provide actionable error message
+            ocr_hint = ""
+            try:
+                from ocr_engine import is_ocr_available
+                if not is_ocr_available():
+                    ocr_hint = " Install pytesseract or easyocr for OCR support."
+                else:
+                    ocr_hint = " OCR was attempted but returned no text. The file may be corrupted."
+            except ImportError:
+                ocr_hint = " OCR module not found."
             raise HTTPException(
                 status_code=422,
-                detail="Could not extract text (possibly image-based PDF). Try AI mode or OCR.",
+                detail=f"Could not extract text (likely image-based/scanned PDF).{ocr_hint}",
             )
 
         lang = _detect_language(cv_text)
@@ -341,13 +351,14 @@ async def list_jobs(
     status: Optional[str] = None,
     my_only: bool = False,
     limit: int = 50,
-    current_user: CurrentUser = Depends(require_permission("cv:view_own")),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """List CV jobs. Staff sees own jobs; QC/Admin see all."""
     with get_db_session() as session:
         query = session.query(CVJob)
 
-        if my_only or current_user.role == "staff":
+        # Staff can only see their own jobs
+        if current_user.role == "staff" or my_only:
             query = query.filter(CVJob.owner_id == current_user.id)
 
         if status:
@@ -694,8 +705,13 @@ async def cancel_batch(
     batch_id: str,
     current_user: CurrentUser = Depends(require_permission("cv:upload")),
 ):
-    """Cancel a running batch."""
+    """Cancel a running batch. Staff can only cancel their own batches."""
     processor = get_processor()
+    batch = processor.get_batch_status(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if current_user.role == "staff" and batch.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied: you can only cancel your own batches")
     result = processor.cancel_batch(batch_id)
     if not result:
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -794,15 +810,27 @@ async def get_stats(
 
 @app.get("/health", tags=["system"])
 async def health_check():
-    """Enhanced health check with DB + processor status."""
+    """Enhanced health check with DB + processor + OCR status."""
+    ocr_status = "unavailable"
+    ocr_backend = "none"
+    try:
+        from ocr_engine import is_ocr_available, get_ocr_backend
+        if is_ocr_available():
+            ocr_status = "ok"
+            ocr_backend = get_ocr_backend()
+    except ImportError:
+        pass
+
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "timestamp": datetime.utcnow().isoformat(),
         "components": {
             "database": "ok",
             "batch_processor": "ok",
             "validation_engine": "ok",
+            "ocr": ocr_status,
+            "ocr_backend": ocr_backend,
         }
     }
 
@@ -834,7 +862,7 @@ async def download_file(download_id: str):
 async def root():
     return {
         "name": "CV Format Tool API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "modules": ["auth", "jobs", "batch", "validation", "audit"],
         "docs": "/docs",
     }
@@ -853,7 +881,8 @@ class ProcessResponse(BaseModel):
     reviewRequired: list[dict] | None = None
 
 
-@app.post("/process", response_model=ProcessResponse, tags=["legacy"])
+@app.post("/process", response_model=ProcessResponse, tags=["legacy"],
+          deprecated=True)
 async def process_cv_legacy(
     file: UploadFile = File(...),
     extraction_mode: str = Form("auto"),
@@ -863,10 +892,15 @@ async def process_cv_legacy(
     openai_model: str = Form("gpt-4o-mini"),
 ):
     """
-    LEGACY endpoint — kept for backward compatibility.
-    For new projects, use POST /jobs instead.
-    This endpoint skips validation + review workflow.
+    DEPRECATED — Use POST /jobs instead.
+    This legacy endpoint skips validation, review, and QC workflow.
+    It will be removed in a future version.
     """
+    import warnings
+    warnings.warn(
+        "POST /process is deprecated. Use POST /jobs for the full workflow.",
+        DeprecationWarning, stacklevel=2,
+    )
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     ext = os.path.splitext(file.filename)[1].lower()
@@ -995,10 +1029,30 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # ── Local helpers (reused from original) ──────────────────────
 
 def _extract_text_from_pdf(pdf_path: str) -> str:
+    """Extract text from PDF. Falls back to OCR for scanned/image-based PDFs."""
     doc = fitz.open(pdf_path)
     texts = [page.get_text() for page in doc]
     doc.close()
-    return "\n".join(texts)
+    text = "\n".join(texts)
+
+    # If very little text extracted, try OCR
+    if len(text.strip()) < 50:
+        try:
+            from ocr_engine import is_ocr_available, extract_text_from_scanned_pdf
+            if is_ocr_available():
+                print(f"[PDF] Low text content ({len(text.strip())} chars), attempting OCR...")
+                ocr_text = extract_text_from_scanned_pdf(pdf_path)
+                if ocr_text.strip():
+                    print(f"[PDF] OCR extracted {len(ocr_text)} chars")
+                    return ocr_text
+                else:
+                    print("[PDF] OCR returned no text")
+            else:
+                print("[PDF] OCR not available (install pytesseract or easyocr)")
+        except Exception as e:
+            print(f"[PDF] OCR fallback failed: {e}")
+
+    return text
 
 def _extract_text_from_docx(docx_path: str) -> str:
     doc = Document(docx_path)

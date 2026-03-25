@@ -233,7 +233,10 @@ class BatchProcessor:
                 cv_text = proc["extract_text_from_docx"](job.file_path)
 
             if not cv_text.strip():
-                raise ValueError("Could not extract text from CV (possibly image-based PDF)")
+                raise ValueError(
+                    "Could not extract text from CV (possibly image-based/scanned PDF). "
+                    "OCR was attempted if available. Check /health for OCR status."
+                )
 
             # Phase 2: Detect language + select template
             job.progress = 0.2

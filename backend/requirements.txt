@@ -15,6 +15,13 @@ PyJWT>=2.8.0
 bcrypt>=4.1.0
 python-jose[cryptography]>=3.3.0
 
+# ── OCR (optional — install for scanned PDF support) ────────────
+# Install ONE of: pytesseract (recommended) or easyocr
+# pytesseract requires system Tesseract: apt install tesseract-ocr tesseract-ocr-vie
+pytesseract>=0.3.10
+Pillow>=10.0.0
+# easyocr>=1.7.0  # Alternative: heavier but no system dependency
+
 # ── Testing ──────────────────────────────────────────────────────
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

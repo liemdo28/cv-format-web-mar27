@@ -1,343 +1,300 @@
-# QA Checklist — CV Format Tool
-> **Phiên bản:** v2.0.0 · Commit: `2da2a26`
-> **Test plan:** 5 giai đoạn — Smoke → Functional → Usability → QC → Load
-> **Exit criteria:** 90% text-based CVs qua full flow, 0 permission bug, staff mới dùng được sau 1 SOP
+# CV Format Tool — QA Test Checklist
+
+> Version: 2.1.0
+> Date: 2026-03-25
+> Exit Criteria: 90% text-based CV pass full flow, no auth/export bugs, batch 30 CV stable
 
 ---
 
-## Tài khoản test
+## Phase 1 — Smoke Test (5 CV)
 
-| Role | Email | Password | Quyền đặc biệt |
-|------|-------|----------|----------------|
-| **admin** | `admin@ns.vn` | `admin123` | Full (override export, manage all) |
-| **qc** | `qc@ns.vn` | `qc123` | Override export, approve with errors |
-| **staff** | `staff@ns.vn` | `staff123` | Upload, self-review; **không** override |
+### Test Data
+| # | File | Type | Purpose |
+|---|------|------|---------|
+| 1 | CV sach 1 | DOCX | Happy path |
+| 2 | CV sach 2 | DOCX | Happy path |
+| 3 | CV text-based 1 | PDF text | PDF extraction |
+| 4 | CV text-based 2 | PDF text | PDF extraction |
+| 5 | CV scan | PDF scan | OCR / fail cleanly |
 
-> ⚠️ **Lưu ý:** Staff chỉ phê duyệt được khi **0 ERROR** validation. Có WARNING vẫn OK.
+### 1.1 Auth Tests
+- [ ] **Login admin**: `POST /auth/login` email=`admin@cvformat.local` password=`admin123` -> token OK
+- [ ] **Login staff**: `POST /auth/login` email=`staff@cvformat.local` password=`staff123` -> token OK
+- [ ] **Login QC**: `POST /auth/login` email=`qc@cvformat.local` password=`qc123` -> token OK
+- [ ] **Login sai password** -> 401 "Invalid email or password"
+- [ ] **Truy cap /jobs khong token** -> 401
+- [ ] **Staff truy cap /users** -> 403
+- [ ] **GET /auth/me** -> tra dung user info
 
----
+### 1.2 Upload + Parse
+- [ ] **Upload DOCX** (staff): `POST /jobs` file=CV1.docx -> `job_id`, `status: "review"`, `parsed_data` co data
+- [ ] **Upload PDF text-based** (staff): `POST /jobs` -> parse OK
+- [ ] **Upload PDF scan** (staff): `POST /jobs` -> tra loi loi ro rang (422), khong treo
+- [ ] **Upload file khong hop le** (.txt, .jpg): -> 400 "Only PDF and DOCX supported"
+- [ ] **Upload file rong** -> error ro rang
 
-## Validation rules cần biết trước khi test
+### 1.3 Review Flow
+- [ ] **GET /jobs/{id}** -> tra parsed_data + validation_errors
+- [ ] **PATCH /jobs/{id}/review** (staff): gui reviewed_data -> OK, version tang
+- [ ] **GET /jobs/{id}/versions** -> co 2 version (initial + review)
 
-### 🔴 ERROR (chặn export cho staff)
-- `MISSING_EMAIL` — thiếu email
-- `INVALID_EMAIL` — email sai format
-- `EMAIL_TYPO` — email có lỗi chính tả (@gmial.com, @gmal.com…)
-- `MISSING_NAME` — thiếu họ tên
-- `MISSING_PHONE` — thiếu số điện thoại
-- `PERIOD_ORDER` — ngày kết thúc ≤ ngày bắt đầu
-- `MISSING_REQUIRED_FIELD` — thiếu field bắt buộc
+### 1.4 QC Flow
+- [ ] **PATCH /jobs/{id}/qc** (qc): result="pass" -> status="approved"
+- [ ] **PATCH /jobs/{id}/qc** (qc): result="needs_revision" -> status="review"
+- [ ] **PATCH /jobs/{id}/qc** (qc): result="fail" -> status="error"
 
-### 🟡 WARNING (cho phép export)
-- `WEAK_EMAIL` — email có thể là spam (maildrop, tempmail…)
-- `TITLE_CASE` — tên công ty/institution >70% IN HOA
-- `BULLET_POINTS` — job entry có < 2 bullet points
-- `DUPLICATE_ENTRY` — entry trùng tên (case-insensitive)
-- `PHONE_MISMATCH` — country code không khớp format
+### 1.5 Export
+- [ ] **POST /jobs/{id}/export** (staff, status=approved) -> download_url, DOCX OK
+- [ ] **GET /download/{id}** -> file DOCX download duoc, mo duoc trong Word/LibreOffice
+- [ ] **Export khi con validation errors** (staff) -> 403 "blocking validation errors"
+- [ ] **Export khi con errors** (QC/admin voi override) -> OK (override)
 
-### 🔵 INFO (thông tin)
-- `VN_PHONE_INTL` — số VN có prefix +84 nhưng thiếu 0
+### 1.6 Health Check
+- [ ] **GET /health** -> `status: "ok"`, kiem tra `components.ocr`
 
----
-
-## ───────────────────────────────────────────
-# GIAI ĐOẠN 1: SMOKE TEST (5 CVs)
-## ───────────────────────────────────────────
-
-**Mục tiêu:** Xác nhận core flow hoạt động end-to-end
-**Thời gian:** ~30 phút
-**Số lượng:** 5 CVs (2 DOCX clean + 2 PDF text + 1 edge case)
-
-### ✅ TC-S01: Upload + Parse — DOCX clean
-- [ ] Upload file `Test_01_JohnDoe_5y_PM.docx`
-- [ ] System parse thành công, hiển thị ReviewPanel
-- [ ] Validation hiện 0 ERROR (có thể có WARNING)
-
-### ✅ TC-S02: Upload + Parse — PDF text
-- [ ] Upload file `Test_02_NguyenVanA_SDE_3y.pdf`
-- [ ] System parse thành công, hiển thị ReviewPanel
-- [ ] Data được extract đầy đủ (name, email, phone, career)
-
-### ✅ TC-S03: Review — Sửa lỗi validation
-- [ ] Upload CV có lỗi `EMAIL_TYPO` (vd: john.doe@gmial.com)
-- [ ] Nhấn "💾 Lưu & tiếp tục" sau khi sửa email
-- [ ] Lỗi biến mất khỏi danh sách
-
-### ✅ TC-S04: Approve — Staff approve không có lỗi
-- [ ] Login as `staff@ns.vn`
-- [ ] Upload CV clean (0 ERROR)
-- [ ] Nhấn "✅ Phê duyệt & Export"
-- [ ] Export thành công (download .docx)
-
-### ✅ TC-S05: Export — Staff bị chặn khi có ERROR
-- [ ] Login as `staff@ns.vn`
-- [ ] Upload CV có 1+ ERROR
-- [ ] Nút approve bị **disabled** (hiển thị "🔒 Cần QC/Admin phê duyệt")
-- [ ] Không có way nào để staff force-export
-
-> **Giai đoạn 1 exit:** 5/5 pass → chuyển Giai đoạn 2
+### Smoke Test Pass Criteria
+- [ ] Khong crash
+- [ ] Loi hien thi ro rang
+- [ ] DOCX output mo duoc
+- [ ] PDF scan fail sach, khong treo
 
 ---
 
-## ───────────────────────────────────────────
-# GIAI ĐOẠN 2: FUNCTIONAL TEST (20 CVs)
-## ───────────────────────────────────────────
+## Phase 2 — Functional Test (20 CV)
 
-**Mục tiêu:** Kiểm tra toàn bộ feature theo từng nhóm CV
-**Thời gian:** ~2–3 giờ
-**Nhóm 1 (5 CVs clean):** 0–1 minor warning
+### Test Data Groups
 
-### ✅ TC-F01–TC-F05: Clean CV flow
-- [ ] TC-F01: DOCX, < 1 năm kinh nghiệm
-- [ ] TC-F02: DOCX, 5+ năm kinh nghiệm, nhiều jobs
-- [ ] TC-F03: PDF text, có education + career
-- [ ] TC-F04: PDF text, có gaps (không liên tục)
-- [ ] TC-F05: PDF text, có certifications/skills section
+**Nhom A — CV sach (5 CV)**
+| # | Profile | Type |
+|---|---------|------|
+| A1 | Software Engineer | DOCX |
+| A2 | Accountant | DOCX |
+| A3 | HR Manager | PDF |
+| A4 | Marketing Specialist | PDF |
+| A5 | Sales Director | DOCX |
 
-**Expected:** Tất cả → 0 ERROR → approve thành công
+**Nhom B — CV lon xon (5 CV)**
+| # | Description | Type |
+|---|-------------|------|
+| B1 | Canva resume (nhieu cot) | PDF |
+| B2 | Design nang, icon nhieu | PDF |
+| B3 | Template fancy (2 cot) | PDF |
+| B4 | CV scan chup anh | PDF scan |
+| B5 | CV handwritten | PDF scan |
 
----
+**Nhom C — CV kho (5 CV)**
+| # | Description | Type |
+|---|-------------|------|
+| C1 | Thieu email | DOCX |
+| C2 | Thieu phone | PDF |
+| C3 | Date format la (2020 thay vi 01/2020) | DOCX |
+| C4 | CV tieng Viet | DOCX |
+| C5 | CV mixed VN/EN | PDF |
 
-**Nhóm 2 (5 CVs messy):** Cần sửa 1–3 fields
+**Nhom D — Edge cases (5 CV)**
+| # | Description | Type |
+|---|-------------|------|
+| D1 | Period nguoc (end < start) | DOCX |
+| D2 | Title ALL CAPS | PDF |
+| D3 | Cong ty trung lap | DOCX |
+| D4 | Bullet qua it (<2) | PDF |
+| D5 | Email typo (gmial.com) | DOCX |
 
-### ✅ TC-F06–TC-F10: Messy CV flow
-- [ ] TC-F06: Email typo → sửa được trong ReviewPanel
-- [ ] TC-F07: Thiếu phone → thêm được
-- [ ] TC-F08: Company name IN HOA → warning (vẫn export được)
-- [ ] TC-F09: Period ngược (end < start) → ERROR chặn staff
-- [ ] TC-F10: Thiếu email hoàn toàn → ERROR, staff bị chặn
+### Test Log Template
+| File | Type | Role | Upload | Parse | Errors | Warnings | Review | QC | Export | Output OK | Time | Notes |
+|------|------|------|--------|-------|--------|----------|--------|----|--------|-----------|------|-------|
+| A1   | DOCX | staff | | | | | | | | | | |
+| A2   | DOCX | staff | | | | | | | | | | |
+| ...  | ... | ... | | | | | | | | | | |
 
-**Expected:** TC-F06 to F08 → export thành công sau sửa. TC-F09–F10 → staff bị chặn
+### Kiem tra Validation
+- [ ] **CV thieu email** -> error FIELD_REQUIRED
+- [ ] **CV email typo** (gmial.com) -> error EMAIL_TYPO voi suggestion
+- [ ] **Phone qua ngan** (<7 so) -> error PHONE_TOO_SHORT
+- [ ] **Phone VN sai format** -> warning PHONE_FORMAT_VN
+- [ ] **Period nguoc** (end < start) -> error PERIOD_END_BEFORE_START
+- [ ] **Nam sinh < 1940 hoac > 2010** -> warning YEAR_OF_BIRTH_UNREASONABLE
+- [ ] **Title ALL CAPS** -> warning TITLE_ALL_CAPS
+- [ ] **Cong ty trung lap** -> warning DUPLICATE_ENTRIES
+- [ ] **Bullet qua it** -> warning TOO_FEW_BULLET_POINTS
+- [ ] **CV gan rong** (<3 field) -> error CV_NEARLY_EMPTY
 
----
-
-**Nhóm 3 (5 CVs difficult):** Complex structure
-
-### ✅ TC-F11–TC-F15: Difficult CV flow
-- [ ] TC-F11: Nhiều positions trong 1 job (career_summary[0].positions[])
-- [ ] TC-F12: Nested responsibilities/achievements (multiline bullet)
-- [ ] TC-F13: Multiple education entries (3+ trường)
-- [ ] TC-F14: Other info sections (skills, languages, certifications)
-- [ ] TC-F15: CV không có career_summary (mới tốt nghiệp)
-
-**Expected:** Edit được tất cả nested fields. TC-F15 → exportable nếu name + email OK
-
----
-
-**Nhóm 4 (5 CVs edge cases):**
-
-### ✅ TC-F16–TC-F20: Edge cases
-- [ ] TC-F16: Số điện thoại VN format `+84 9x.xxx.xxxx` → INFO warning
-- [ ] TC-F17: Email `john@tempmail.com` → WARNING
-- [ ] TC-F18: 2 jobs trùng tên công ty → DUPLICATE_ENTRY warning
-- [ ] TC-F19: Job chỉ có 1 bullet point → BULLET_POINTS warning
-- [ ] TC-F20: Upload cùng file 2 lần → xử lý hợp lý (hoặc error rõ ràng)
-
-**Expected:** All edge cases handled gracefully, no crash
-
----
-
-## Giai đoạn 2 exit criteria:
-- [ ] ≥ 17/20 CVs (85%) parse + export thành công
-- [ ] 0 crash / 0 500 error
-- [ ] Permission flow đúng: staff bị chặn khi có ERROR
-
----
-
-## ───────────────────────────────────────────
-# GIAI ĐOẠN 3: USABILITY TEST — STAFF MỚI
-## ───────────────────────────────────────────
-
-**Mục tiêu:** Staff mới (chưa đọc code, chỉ có SOP) dùng được sau 1 lần đọc
-**Thời gian:** ~1 giờ
-**Số lượng:** 10 CVs
-**Người test:** Staff mới (không phải developer)
-
-### SOP cơ bản (đính kèm checklist này)
-```
-1. Login → Upload CV
-2. Chờ ReviewPanel mở
-3. Đọc tab "⚠️ Validation" — nếu có 🔴 ERROR:
-   → Chuyển tab "📝 Chỉnh sửa fields"
-   → Sửa field bị lỗi
-   → Nhấn "💾 Lưu & tiếp tục"
-4. Nếu 0 🔴 ERROR:
-   → Nhấn "✅ Phê duyệt & Export"
-5. Download file .docx
-```
-
-### ✅ TC-U01–TC-U10: Staff usability
-- [ ] TC-U01–TC-U05: Staff làm theo SOP, 5 CVs clean → pass
-- [ ] TC-U06–TC-U08: Staff gặp lỗi (email typo) → tự sửa được
-- [ ] TC-U09: Staff gặp ERROR → nhấn "🔒 Cần QC/Admin" → gọi QC (pass)
-- [ ] TC-U10: Staff hiểu được badge màu (🔴🟡🔵) không cần giải thích
-
-### ✅ Additional usability checks
-- [ ] Staff không cần hướng dẫn để sửa nested field (vd: career[0].positions[1].responsibilities)
-- [ ] Staff hiểu multiline = bullet points (mỗi dòng = 1 bullet)
-- [ ] Tab "👁️ Preview data" hữu ích khi cần xem JSON
-- [ ] Không có confusion giữa "Lưu & tiếp tục" vs "Phê duyệt & Export"
-
-> **Giai đoạn 3 exit:** ≥ 7/10 CVs (70%) staff tự làm được sau 1 lần đọc SOP
-> **Target:** ≥ 9/10 (90%) — staff mới không cần hỗ trợ
+### Pass Criteria
+- [ ] 80-90% CV text-based di het flow
+- [ ] Toan bo loi chan duoc phat hien (errors block export)
+- [ ] CV scan fail sach, khong tao output rac
+- [ ] Validation errors/warnings dung loai
 
 ---
 
-## ───────────────────────────────────────────
-# GIAI ĐOẠN 4: QC TEST
-## ───────────────────────────────────────────
+## Phase 3 — Usability Test (1 staff moi)
 
-**Mục tiêu:** QC kiểm tra override flow + data integrity
-**Thời gian:** ~1 giờ
-**Số lượng:** 10 CVs (đã bị staff review + export)
-**Người test:** 1 QC
+### Setup
+- Tao 1 user staff moi: `POST /users` (admin)
+- Chuan bi 10 CV + SOP ngan
 
-### ✅ Override flow — QC
-- [ ] Login as `qc@ns.vn`
-- [ ] Upload CV có ERROR (vd: email typo)
-- [ ] Nhấn "⚠️ Phê duyệt & Export (override)"
-- [ ] Export thành công dù có ERROR
-- [ ] Kiểm tra exported DOCX: đúng data đã sửa
+### Quan sat
+- [ ] Staff moi login duoc
+- [ ] Staff moi hieu flow upload -> review -> QC
+- [ ] Staff moi phan biet duoc error vs warning
+- [ ] Staff moi biet luc nao can QC/Admin
+- [ ] Staff moi tu xu ly duoc it nhat 7/10 CV
+- [ ] Ghi nhan cho vuong thanh bug/UI issue
 
-### ✅ Override flow — Admin
-- [ ] Login as `admin@ns.vn`
-- [ ] Repeat test trên → admin cũng override được
-
-### ✅ QC random audit (5 CVs)
-- [ ] QC chọn ngẫu nhiên 5 CVs đã export
-- [ ] So sánh exported DOCX với ReviewPanel data → 100% match
-- [ ] Không có field bị mất / sai khi export
-
-### ✅ Batch review list
-- [ ] QC xem danh sách jobs
-- [ ] Filter: `status=qc` → thấy jobs đang chờ QC
-- [ ] Filter: `status=exported` → thấy jobs đã export
-
-> **Giai đoạn 4 exit:**
-> - [ ] Override flow hoạt động đúng cho QC + Admin
-> - [ ] 5/5 exported DOCX match ReviewPanel data
-> - [ ] 0 data corruption
+### Questions to Ask
+1. Flow co de hieu khong?
+2. Bi ket o dau?
+3. Co biet sai so nao can sua?
+4. Mat bao lau / CV?
 
 ---
 
-## ───────────────────────────────────────────
-# GIAI ĐOẠN 5: BATCH / LOAD TEST
-## ───────────────────────────────────────────
+## Phase 4 — QC Workflow Test (10 CV)
 
-**Mục tiêu:** Xử lý đồng thời 30–50 CVs không crash
-**Thời gian:** ~1–2 giờ (tùy số lượng + size)
-**Số lượng:** 30–50 CVs across 3 batches
+### Chuan bi
+- 10 CV da qua review boi staff
+- 1 QC user
 
-### ✅ Batch 1 — 10 CVs (10 staff uploads)
-- [ ] Tạo batch mới
-- [ ] Upload 10 files (DOCX + PDF mixed)
-- [ ] Batch status: "processing" → "completed"
-- [ ] Kiểm tra mỗi job có `status`, `parsed_data`, `validation_result`
-- [ ] 0 crash trong quá trình xử lý
+### Test Cases
+- [ ] QC xem validation result cua tung CV
+- [ ] QC xem version history (GET /jobs/{id}/versions)
+- [ ] QC approve CV tot -> status="approved"
+- [ ] QC reject CV xau -> status="error"
+- [ ] QC yeu cau sua lai -> status="review" (staff thay va sua tiep)
+- [ ] QC override export khi co warnings (khong co errors)
+- [ ] QC co cv:override_export -> co the export khi co errors
 
-### ✅ Batch 2 — 20 CVs (20 staff uploads)
-- [ ] Tạo batch thứ 2
-- [ ] Upload 20 files
-- [ ] Kiểm tra batch summary: số pass / fail
-- [ ] Mỗi job có file_path đúng (nếu cần reprocess)
-
-### ✅ Batch 3 — 10–20 CVs (mixed sizes)
-- [ ] Upload mix: 5 small (< 500KB) + 5 large (> 2MB) CVs
-- [ ] Verify large files không gây timeout
-- [ ] Verify all files processed (no silent failure)
-
-### ✅ Batch ownership security
-- [ ] Staff A tạo batch → Staff B **không** thấy batch của A
-- [ ] Staff A tạo batch → Admin thấy batch của A
-- [ ] Staff A không thể cancel batch của Staff B
-
-### ✅ Batch cancel
-- [ ] Cancel batch đang processing
-- [ ] Verify jobs đang chạy dừng lại
-- [ ] Batch status → "cancelled"
-
-> **Giai đoạn 5 exit:**
-> - [ ] 3/3 batches processed không crash
-> - [ ] 30–50/30–50 CVs có kết quả (parsed + validated)
-> - [ ] 0 timeout / 0 OOM error
-> - [ ] Batch ownership isolation hoạt động
+### Do luong
+| Metric | Value |
+|--------|-------|
+| Avg time QC / CV | ___s |
+| Reject rate | ___% |
+| Ly do reject pho bien | ___ |
+| UI du thong tin? | Y/N |
 
 ---
 
-## ───────────────────────────────────────────
-# PERMISSION REGRESSION CHECKLIST
-## ───────────────────────────────────────────
+## Phase 5 — Batch / Load Test (30-50 CV)
 
-Chạy lại sau mỗi giai đoạn (5 phút):
+### Test Setup
+- Chuan bi 30-50 CV text-based (DOCX + PDF mix)
+- Chia 2-3 batch: batch A (15 CV), batch B (15 CV), batch C (20 CV)
+
+### Test Cases
+- [ ] **POST /batch** 15 files -> batch_id, status="running"
+- [ ] **GET /batch/{id}** polling -> progress tang dan
+- [ ] **GET /batch/{id}/jobs** -> tung job co status rieng
+- [ ] **Batch hoan tat** -> status="completed" hoac "completed_with_errors"
+- [ ] **Batch 2 (staff khac)** -> staff 1 KHONG thay batch cua staff 2
+- [ ] **Cancel batch** -> status="cancelled", jobs pending -> cancelled
+- [ ] **Staff cancel batch nguoi khac** -> 403
+
+### Do luong
+| Metric | Value |
+|--------|-------|
+| Total time batch 15 CV | ___s |
+| Total time batch 20 CV | ___s |
+| So job fail | ___ |
+| Loai loi | ___ |
+| Co batch nao doc sai owner? | Y/N |
+| Server co crash/treo? | Y/N |
+
+---
+
+## Bug Focus List
+
+Soi ky cac diem nay (dua tren review code):
 
 ### Auth
-- [ ] Đăng nhập sai password 3 lần → không có leak thông tin
-- [ ] Không có token → call API → 401 Unauthorized
-- [ ] Token hết hạn → call API → 401 Unauthorized
-- [ ] JWT_SECRET missing khi start server → crash với message rõ ràng
+- [ ] Login voi password moi (bcrypt) -> OK
+- [ ] Login voi password cu (PBKDF2 fallback) -> OK
+- [ ] Login voi password HMAC legacy -> REJECTED (phai re-hash)
+- [ ] Token expired -> 401 "Token expired"
+- [ ] Refresh token -> new access token
 
-### Role: Staff
-- [ ] Upload CV → ✓
-- [ ] Xem job của mình → ✓
-- [ ] Xem job của người khác → ✗ (403)
-- [ ] Override export khi có ERROR → ✗ (button disabled)
-- [ ] Xem batch của người khác → ✗ (403)
-- [ ] Cancel batch của người khác → ✗ (403)
+### Export
+- [ ] Export khi con errors -> block (staff), allow (QC/admin override)
+- [ ] Export tu status "review" -> allowed
+- [ ] Export tu status "error" -> blocked
+- [ ] DOCX output KHONG con text cu dinh lai (kiem tra _set_tab fix)
 
-### Role: QC
-- [ ] Override export khi có ERROR → ✓
-- [ ] Xem tất cả jobs (không chỉ của mình) → ✓
-- [ ] Xem tất cả batches → ✓
+### Review
+- [ ] Review save voi nested array fields (career_summary.positions.responsibilities)
+- [ ] Review tao version moi, khong ghi de version cu
+- [ ] Validation re-run sau review
 
-### Role: Admin
-- [ ] Override export → ✓
-- [ ] Xem + cancel bất kỳ batch nào → ✓
-- [ ] Access control panel (nếu có) → ✓
+### Batch
+- [ ] Batch ownership giua cac staff
+- [ ] Cancel batch chi cho owner hoac admin
+- [ ] Batch 30 CV khong crash
+- [ ] Job status chuyen dung: queued -> processing -> parsed -> validated -> completed/failed
 
----
+### JSON Parser
+- [ ] AI tra JSON sach -> parse OK
+- [ ] AI tra JSON trong ``` block -> parse OK
+- [ ] AI tra malformed JSON (trailing comma) -> parse OK (cleanup)
+- [ ] AI tra text khong co JSON -> error message ro rang
 
-## ───────────────────────────────────────────
-# BUG TRACKING TEMPLATE
-## ───────────────────────────────────────────
+### OCR (neu co)
+- [ ] PDF scan co OCR installed -> extract text
+- [ ] PDF scan khong co OCR -> error message chi dan cai OCR
+- [ ] GET /health -> hien thi OCR status + backend name
 
-```
-Bug ID: BUG-___
-Severity: 🔴 Critical / 🟡 Medium / 🔵 Low
-Title:
-Steps to reproduce:
-1.
-2.
-3.
-
-Expected:
-Actual:
-
-Evidence (screenshot / log):
-Assignee:
-Status: Open / Fixed / Won't Fix
-```
-
-### Known issues (fixed in v2.0.0):
-- ~~Batch staff isolation~~ → Fixed commit `2da2a26`
-- ~~Duplicate `job.reviewed_data` line~~ → Fixed commit `2da2a26`
-- ~~Validation chạy trước khi assign cv_data~~ → Fixed commit `2da2a26`
-- ~~bcrypt hash not salted~~ → Fixed commit `be2f125`
-- ~~Nested path parser broken~~ → Fixed commit `be2f125`
-- ~~Staff có thể override export~~ → Fixed commit `be2f125`
+### Legacy Endpoint
+- [ ] POST /process van hoat dong (backward compat)
+- [ ] POST /process hien deprecated trong /docs (Swagger)
 
 ---
 
-## FINAL SIGN-OFF
+## Exit Criteria Summary
 
-| Giai đoạn | Kết quả | Tester | Ngày |
-|-----------|---------|--------|------|
-| Giai đoạn 1 — Smoke (5 CVs) | ___/5 pass | | |
-| Giai đoạn 2 — Functional (20 CVs) | ___/20 pass | | |
-| Giai đoạn 3 — Usability (10 CVs) | ___/10 pass | | |
-| Giai đoạn 4 — QC (10 CVs) | ___/10 pass | | |
-| Giai đoạn 5 — Batch (30–50 CVs) | ___/___ pass | | |
-| Permission regression | PASS / FAIL | | |
+| Criteria | Target | Actual | Pass? |
+|----------|--------|--------|-------|
+| CV text-based full flow | >= 90% | | |
+| Bug quyen truy cap nghiem trong | 0 | | |
+| Bug export sai noi dung | 0 | | |
+| Batch 30 CV khong crash | Yes | | |
+| Staff moi dung duoc sau SOP | Yes | | |
+| QC duyet duoc trong he thong | Yes | | |
 
-**Overall: ⬜ PASS** — Sẵn sàng production
-**Date:** _______________
-**Sign-off by:** _______________
+---
+
+## Appendix: API Quick Reference
+
+```
+# Auth
+POST   /auth/login          — Login, get tokens
+POST   /auth/refresh         — Refresh access token
+GET    /auth/me              — Current user info
+
+# Users (admin only)
+GET    /users                — List users
+POST   /users                — Create user
+PATCH  /users/{id}           — Update user
+
+# Jobs (main workflow)
+POST   /jobs                 — Upload + parse CV
+GET    /jobs                 — List jobs
+GET    /jobs/{id}            — Get job detail
+PATCH  /jobs/{id}/review     — Staff review/correct
+PATCH  /jobs/{id}/qc         — QC approve/reject
+POST   /jobs/{id}/export     — Export to DOCX
+GET    /jobs/{id}/versions   — Version history
+
+# Batch
+POST   /batch                — Upload batch
+GET    /batch                — List batches
+GET    /batch/{id}           — Batch status
+GET    /batch/{id}/jobs      — Jobs in batch
+DELETE /batch/{id}           — Cancel batch
+
+# Other
+POST   /validate             — Standalone validation
+GET    /audit                — Audit log
+GET    /stats                — KPI dashboard
+GET    /health               — System health
+GET    /download/{id}        — Download DOCX
+
+# Legacy (DEPRECATED)
+POST   /process              — Old process endpoint (use /jobs instead)
+```
