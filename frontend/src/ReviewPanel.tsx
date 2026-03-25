@@ -1,58 +1,10 @@
 import { useState, useCallback } from 'react'
-import type { ValidationError } from './types'
+import type {
+  ParsedCVData,
+  ValidationError,
+} from './types'
 
-// ── Types ────────────────────────────────────────────────────────
-
-export interface ParsedCVData {
-  full_name?: string
-  gender?: string
-  year_of_birth?: string
-  marital_status?: string
-  address?: string
-  email?: string
-  phone?: string
-  career_summary?: CareerEntry[]
-  education?: EducationEntry[]
-  other_info?: OtherInfoEntry[]
-}
-
-export interface CareerEntry {
-  period?: string
-  company?: string
-  company_description?: string
-  positions?: Position[]
-  responsibilities?: string[]
-}
-
-export interface Position {
-  period?: string
-  title?: string
-  report_to?: string
-  section_label?: string
-  responsibilities?: string[]
-  achievements_label?: string
-  achievements?: string[]
-}
-
-export interface EducationEntry {
-  period?: string
-  institution?: string
-  details?: string[]
-}
-
-export interface OtherInfoEntry {
-  section_title?: string
-  items?: string[]
-}
-
-export interface ValidationError {
-  field: string
-  code: string
-  message: string
-  severity: 'error' | 'warning' | 'info'
-  value?: string
-  suggestion?: string
-}
+export type { ParsedCVData }
 
 export interface ReviewResult {
   validation_result: {
@@ -85,7 +37,7 @@ interface ReviewPanelProps {
 // ── Sub-components ────────────────────────────────────────────────
 
 function ValidationBadge({ error }: { error: ValidationError }) {
-  const colors: Record<string, string> = {
+  const colors: Record<string, { bg: string; border: string; text: string }> = {
     error: { bg: '#FEE2E2', border: '#EF4444', text: '#991B1B' },
     warning: { bg: '#FEF3C7', border: '#F59E0B', text: '#92400E' },
     info: { bg: '#DBEAFE', border: '#3B82F6', text: '#1E40AF' },
@@ -303,7 +255,6 @@ export default function ReviewPanel({
   // - qc/ad : can override and export even with warnings (cv:override_export)
   const canOverride = userRole === 'qc' || userRole === 'admin'
   const canApprove = !hasErrors || canOverride
-  const isOverride = hasErrors && canOverride
 
   return (
     <div style={{

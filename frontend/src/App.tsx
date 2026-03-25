@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import axios, { type AxiosError } from 'axios'
 import type {
   FileItem, Settings, ProcessResult,
-  AuthUser, LoginResponse, ValidationResult, ParsedCVData,
+  AuthUser, LoginResponse, ParsedCVData,
 } from './types'
 import TrainingPanel from './TrainingPanel'
 import ReviewPanel from './ReviewPanel'
@@ -255,8 +255,6 @@ function LoginModal({ onSuccess, onClose, backendUrl }: LoginModalProps) {
 
 // ── Axios auth interceptor ─────────────────────────────────────
 // Refreshes access token when expired; re-attempts original request.
-let _refreshPromise: Promise<string | null> | null = null
-
 axios.interceptors.response.use(
   res => res,
   async (err: AxiosError) => {
@@ -279,7 +277,7 @@ axios.interceptors.response.use(
         const newAuth = { ...auth, accessToken: newToken }
         localStorage.setItem('cvformat-auth-v2', JSON.stringify(newAuth))
         axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`
-        orig.headers = { ...orig.headers, Authorization: `Bearer ${newToken}` }
+        orig.headers.Authorization = `Bearer ${newToken}`
         return axios(orig)
       } catch {
         localStorage.removeItem('cvformat-auth-v2')
@@ -1047,6 +1045,8 @@ export default function App() {
         style={{ display: 'none' }}
         onChange={handleFileInput}
       />
+      </>
+      )}
 
       {/* Settings modal */}
       {showSettings && (
