@@ -764,8 +764,8 @@ async def get_stats(
                 delta = (completed_at - created).total_seconds()
                 if 0 < delta < 3600:  # Sanity: < 1 hour
                     times.append(delta)
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError):
+                continue
 
         avg_time = round(statistics.mean(times), 1) if times else 0
 
@@ -1026,8 +1026,6 @@ def _parse_json_response(text: str) -> dict:
         brace_s = json_str.find('{')
         brace_e = json_str.rfind('}') + 1
         if brace_s != -1 and brace_e > brace_s:
-            _slice: slice = slice(brace_s, brace_e)
-            json_str = json_str[_slice]
             json_str = json_str[brace_s:brace_e]
     try:
         return json.loads(json_str)
@@ -1255,6 +1253,9 @@ def _set_tab(p, value):
     if p.runs:
         full = p.text
         label = full.split('\t')[0] + '\t' if '\t' in full else full
+        # Clear all runs first to remove stale text
+        for run in p.runs:
+            run.text = ""
         p.runs[0].text = label + value
 
 

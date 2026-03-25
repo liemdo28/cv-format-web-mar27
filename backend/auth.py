@@ -45,10 +45,17 @@ except ImportError:
         )
     def _verify_fallback(password: str, stored: str) -> bool:
         try:
-            salt_b64, _hash_b64 = stored.split("$")
+            # Format: "pbkdf2_sha256$salt_b64$hash_hex"
+            parts = stored.split("$")
+            if len(parts) == 3:
+                _prefix, salt_b64, hash_hex = parts
+            elif len(parts) == 2:
+                salt_b64, hash_hex = parts
+            else:
+                return False
             salt = base64.b64decode(salt_b64)
             expected = _pbkdf2_fallback(password, salt)
-            return secrets.compare_digest(expected.hex(), _hash_b64)
+            return secrets.compare_digest(expected.hex(), hash_hex)
         except Exception:
             return False
 

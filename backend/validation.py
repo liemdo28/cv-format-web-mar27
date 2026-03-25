@@ -649,7 +649,7 @@ def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> Validatio
 
     # 8. Marital status
     marital = cv_data.get("marital_status", "")
-    valid_marital = {"single", "married", "married", "độc thân", "đã kết hôn", "có gia đình"}
+    valid_marital = {"single", "married", "divorced", "độc thân", "đã kết hôn", "có gia đình", "ly hôn"}
     if marital and marital.lower().strip() not in valid_marital:
         info.append(ValidationError(
             field="marital_status",
