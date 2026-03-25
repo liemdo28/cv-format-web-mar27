@@ -127,7 +127,49 @@
 
 ---
 
-## Phase 3 — Usability Test (1 staff moi)
+## Phase 3 — OCR Test (6 scanned PDF)
+
+### Pre-requisite
+- [ ] **GET /health** -> kiem tra `components.ocr` = "ok", `ocr_backend` = "tesseract"
+- [ ] Neu ocr = "unavailable" -> deploy chua cai Tesseract system binary -> fix truoc khi test
+
+### Test Data
+| # | File | Description |
+|---|------|-------------|
+| O1 | PDF scan sach (300 DPI) | 1-2 trang, text ro |
+| O2 | PDF scan mo (150 DPI) | Chat luong thap |
+| O3 | PDF chup bang dien thoai | Nghieng, bong |
+| O4 | PDF tieng Viet scan | Dau tieng Viet |
+| O5 | PDF mixed (trang 1 text, trang 2 scan) | Kiem tra hybrid |
+| O6 | PDF image-only (poster/infographic) | Khong phai CV |
+
+### Test Cases
+- [ ] **O1** upload -> OCR extract text -> parse co data -> validation chay
+- [ ] **O2** upload -> OCR co text nhung chat luong kem -> validation co warnings
+- [ ] **O3** upload -> OCR fail hoac rat it text -> error ro rang
+- [ ] **O4** upload -> OCR voi tieng Viet -> dau dung khong
+- [ ] **O5** upload -> text + OCR ket hop -> parse OK
+- [ ] **O6** upload -> fail sach voi message "could not extract text"
+
+### OCR Quality Log
+| File | OCR chars | Parse OK | Validation | Usable? | Notes |
+|------|-----------|----------|------------|---------|-------|
+| O1 | | | | | |
+| O2 | | | | | |
+| O3 | | | | | |
+| O4 | | | | | |
+| O5 | | | | | |
+| O6 | | | | | |
+
+### Pass Criteria
+- [ ] OCR thanh cong it nhat 2/6 file scan
+- [ ] Tat ca fail case co error message ro rang
+- [ ] Khong co case treo/crash
+- [ ] /health report dung OCR status
+
+---
+
+## Phase 4 — Usability Test (1 staff moi)
 
 ### Setup
 - Tao 1 user staff moi: `POST /users` (admin)
@@ -149,7 +191,7 @@
 
 ---
 
-## Phase 4 — QC Workflow Test (10 CV)
+## Phase 5 — QC Workflow Test (10 CV)
 
 ### Chuan bi
 - 10 CV da qua review boi staff
@@ -174,7 +216,7 @@
 
 ---
 
-## Phase 5 — Batch / Load Test (30-50 CV)
+## Phase 6 — Batch / Load Test (30-50 CV)
 
 ### Test Setup
 - Chuan bi 30-50 CV text-based (DOCX + PDF mix)
@@ -297,4 +339,196 @@ GET    /download/{id}        — Download DOCX
 
 # Legacy (DEPRECATED)
 POST   /process              — Old process endpoint (use /jobs instead)
+```
+
+---
+
+## Appendix B: Step-by-Step Tester Guide
+
+> Huong dan cho tester thao tac tung buoc. Copy phan nay ra de test.
+
+### B.1 Setup
+
+```bash
+# Base URL (thay bang URL Render thuc te)
+BASE=https://cv-format-api.onrender.com
+
+# 1. Kiem tra health
+curl $BASE/health | python3 -m json.tool
+
+# 2. Login admin
+curl -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@cvformat.local","password":"admin123"}' \
+  | python3 -m json.tool
+
+# Luu access_token vao bien
+ADMIN_TOKEN="<paste token here>"
+
+# 3. Login staff
+curl -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"staff@cvformat.local","password":"staff123"}'
+
+STAFF_TOKEN="<paste token here>"
+
+# 4. Login QC
+curl -X POST $BASE/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"qc@cvformat.local","password":"qc123"}'
+
+QC_TOKEN="<paste token here>"
+```
+
+### B.2 Upload + Parse (staff)
+
+```bash
+# Upload 1 CV
+curl -X POST $BASE/jobs \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -F "file=@/path/to/cv.docx" \
+  -F "extraction_mode=offline" \
+  | python3 -m json.tool
+
+# Luu job_id
+JOB_ID="<paste job_id here>"
+
+# Xem job detail
+curl $BASE/jobs/$JOB_ID \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  | python3 -m json.tool
+```
+
+### B.3 Review (staff)
+
+```bash
+# Xem validation errors truoc
+curl $BASE/jobs/$JOB_ID \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  | python3 -m json.tool | grep -A5 validation
+
+# Gui review data (sua lai du lieu)
+curl -X PATCH $BASE/jobs/$JOB_ID/review \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reviewed_data": {
+      "full_name": "Nguyen Van A",
+      "email": "nguyenvana@gmail.com",
+      "phone": "+84 912 345 678",
+      "career_summary": [],
+      "education": [],
+      "other_info": []
+    },
+    "notes": "Fixed email and phone"
+  }' | python3 -m json.tool
+
+# Kiem tra version history
+curl $BASE/jobs/$JOB_ID/versions \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  | python3 -m json.tool
+```
+
+### B.4 QC (qc user)
+
+```bash
+# QC approve
+curl -X PATCH $BASE/jobs/$JOB_ID/qc \
+  -H "Authorization: Bearer $QC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"result":"pass","notes":"Looks good"}' \
+  | python3 -m json.tool
+
+# Hoac reject
+curl -X PATCH $BASE/jobs/$JOB_ID/qc \
+  -H "Authorization: Bearer $QC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"result":"needs_revision","notes":"Email sai"}' \
+  | python3 -m json.tool
+```
+
+### B.5 Export + Download (staff)
+
+```bash
+# Export (chi khi status=approved)
+curl -X POST $BASE/jobs/$JOB_ID/export \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -F "client_name=ABC Corp" \
+  -F "position=Software Engineer" \
+  | python3 -m json.tool
+
+# Download DOCX
+DOWNLOAD_ID="<paste download_id>"
+curl -o output.docx $BASE/download/$DOWNLOAD_ID
+
+# Mo file kiem tra
+# macOS: open output.docx
+# Linux: libreoffice output.docx
+```
+
+### B.6 Batch Upload (staff)
+
+```bash
+# Upload nhieu file
+curl -X POST $BASE/batch \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -F "files=@cv1.docx" \
+  -F "files=@cv2.pdf" \
+  -F "files=@cv3.docx" \
+  -F "extraction_mode=offline" \
+  -F "batch_name=Test batch 1" \
+  | python3 -m json.tool
+
+BATCH_ID="<paste batch_id>"
+
+# Polling status
+curl $BASE/batch/$BATCH_ID \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  | python3 -m json.tool
+
+# Xem tung job
+curl $BASE/batch/$BATCH_ID/jobs \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  | python3 -m json.tool
+```
+
+### B.7 Permission Tests
+
+```bash
+# Staff KHONG duoc xem /users
+curl $BASE/users \
+  -H "Authorization: Bearer $STAFF_TOKEN"
+# Expected: 403
+
+# Staff KHONG duoc cancel batch nguoi khac
+curl -X DELETE $BASE/batch/$OTHER_BATCH_ID \
+  -H "Authorization: Bearer $STAFF_TOKEN"
+# Expected: 403
+
+# Khong token -> 401
+curl $BASE/jobs
+# Expected: 401
+
+# QC xem tat ca jobs
+curl $BASE/jobs \
+  -H "Authorization: Bearer $QC_TOKEN" \
+  | python3 -m json.tool
+# Expected: all jobs visible
+```
+
+### B.8 OCR Test
+
+```bash
+# Kiem tra OCR status
+curl $BASE/health | python3 -m json.tool
+# Expected: "ocr": "ok", "ocr_backend": "tesseract"
+
+# Upload scanned PDF
+curl -X POST $BASE/jobs \
+  -H "Authorization: Bearer $STAFF_TOKEN" \
+  -F "file=@scanned_cv.pdf" \
+  -F "extraction_mode=offline" \
+  | python3 -m json.tool
+# Neu OCR ok: parsed_data co data
+# Neu OCR fail: 422 voi message ro rang
 ```
