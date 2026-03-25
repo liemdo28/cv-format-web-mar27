@@ -1,7 +1,27 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import axios from 'axios'
-import type { FileItem, Settings, ProcessResult } from './types'
+import axios, { type AxiosError } from 'axios'
+import type {
+  FileItem, Settings, ProcessResult,
+  AuthUser, LoginResponse, ValidationResult, ParsedCVData,
+} from './types'
 import TrainingPanel from './TrainingPanel'
+import ReviewPanel from './ReviewPanel'
+
+// ── Auth state ────────────────────────────────────────────────
+interface AuthState {
+  user: AuthUser | null
+  accessToken: string | null
+  refreshToken: string | null
+}
+
+function loadAuth(): AuthState {
+  try {
+    const raw = localStorage.getItem('cvformat-auth-v2')
+    return raw ? JSON.parse(raw) : { user: null, accessToken: null, refreshToken: null }
+  } catch {
+    return { user: null, accessToken: null, refreshToken: null }
+  }
+}
 
 // ── Default settings ───────────────────────────────────────────
 const DEFAULT_SETTINGS: Settings = {
@@ -143,6 +163,135 @@ function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
   )
 }
 
+// ── Login Modal ───────────────────────────────────────────────
+interface LoginModalProps {
+  onSuccess: (user: AuthUser, accessToken: string, refreshToken: string) => void
+  onClose: () => void
+  backendUrl: string
+}
+
+function LoginModal({ onSuccess, onClose, backendUrl }: LoginModalProps) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await axios.post<LoginResponse>(
+        `${backendUrl}/auth/login`,
+        { email, password },
+        { headers: { 'Content-Type': 'application/json' } }
+      )
+      onSuccess(res.data.user, res.data.access_token, res.data.refresh_token)
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : (err instanceof Error ? err.message : 'Login failed')
+      setError(typeof msg === 'string' ? msg : 'Login failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 380 }}>
+        <div className="modal-header">
+          <span className="modal-title">🔐 Đăng nhập</span>
+          <button className="modal-close" onClick={onClose}>&times;</button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 4 }}>Email</div>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+                autoFocus
+                style={{ width: '100%', padding: '6px 10px', border: '1px solid #D1D5DB', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }}
+                placeholder="admin@ns.vn"
+              />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 4 }}>Password</div>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                style={{ width: '100%', padding: '6px 10px', border: '1px solid #D1D5DB', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' }}
+                placeholder="••••••••"
+              />
+            </div>
+            {error && (
+              <div style={{ background: '#FEE2E2', border: '1px solid #EF4444', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: '#991B1B' }}>
+                ❌ {error}
+              </div>
+            )}
+            <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF' }}>
+              <strong>Demo accounts:</strong><br />
+              admin@ns.vn / admin123<br />
+              qc@ns.vn / qc123<br />
+              staff@ns.vn / staff123
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn" onClick={onClose}>Hủy</button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? '⏳...' : 'Đăng nhập'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Axios auth interceptor ─────────────────────────────────────
+// Refreshes access token when expired; re-attempts original request.
+let _refreshPromise: Promise<string | null> | null = null
+
+axios.interceptors.response.use(
+  res => res,
+  async (err: AxiosError) => {
+    const orig = err.config as (typeof err.config & { _retry?: boolean }) | undefined
+    if (
+      err.response?.status === 401 &&
+      orig && !orig._retry &&
+      !orig.url?.includes('/auth/')
+    ) {
+      orig._retry = true
+      try {
+        const auth = loadAuth()
+        if (!auth.refreshToken) throw new Error('No refresh token')
+        const refreshRes = await axios.post<{ access_token: string }>(
+          `${DEFAULT_SETTINGS.backendUrl}/auth/refresh`,
+          { refresh_token: auth.refreshToken },
+          { headers: { 'Content-Type': 'application/json' } }
+        )
+        const newToken = refreshRes.data.access_token
+        const newAuth = { ...auth, accessToken: newToken }
+        localStorage.setItem('cvformat-auth-v2', JSON.stringify(newAuth))
+        axios.defaults.headers.common['Authorization'] = `Bearer ${newToken}`
+        orig.headers = { ...orig.headers, Authorization: `Bearer ${newToken}` }
+        return axios(orig)
+      } catch {
+        localStorage.removeItem('cvformat-auth-v2')
+        delete axios.defaults.headers.common['Authorization']
+        window.location.reload()
+        return Promise.reject(err)
+      }
+    }
+    return Promise.reject(err)
+  }
+)
+
 // ── Main App ──────────────────────────────────────────────────
 export default function App() {
   const [files, setFiles] = useState<FileItem[]>([])
@@ -155,15 +304,24 @@ export default function App() {
       return DEFAULT_SETTINGS
     }
   })
-  const [showSettings, setShowSettings] = useState(false)
+  // ── Auth state ───────────────────────────────────────────────
+  const [auth, setAuth] = useState<AuthState>(loadAuth)
+  const [showLogin, setShowLogin] = useState(!loadAuth().user)
+
+  // ── Review panel state ───────────────────────────────────────
+  const [reviewFile, setReviewFile] = useState<FileItem | null>(null)
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [dragging, setDragging] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'process' | 'training'>('process')
+  const [showSettings, setShowSettings] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
+  // Keep a ref so review callbacks don't go stale across renders
+  const reviewFileRef = useRef<FileItem | null>(null)
 
   const addLog = useCallback((...lines: string[]) => {
     setLogs(prev => [...prev,
@@ -268,6 +426,149 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('cvformat-settings-v2', JSON.stringify(settings))
   }, [settings])
+
+  // ── Auth: set Bearer token when auth changes ──────────────────
+  useEffect(() => {
+    if (auth.accessToken) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${auth.accessToken}`
+    } else {
+      delete axios.defaults.headers.common['Authorization']
+    }
+  }, [auth.accessToken])
+
+  const handleLoginSuccess = useCallback((
+    user: AuthUser,
+    accessToken: string,
+    refreshToken: string,
+  ) => {
+    const next: AuthState = { user, accessToken, refreshToken }
+    localStorage.setItem('cvformat-auth-v2', JSON.stringify(next))
+    setAuth(next)
+    setShowLogin(false)
+    addLog(`✅ Đăng nhập thành công: ${user.full_name} (${user.role})`)
+  }, [addLog])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('cvformat-auth-v2')
+    setAuth({ user: null, accessToken: null, refreshToken: null })
+    setShowLogin(true)
+    addLog('👋 Đã đăng xuất')
+  }, [addLog])
+
+  // ── Review panel handlers ─────────────────────────────────────
+  /**
+   * Called when user clicks "Review" on a file in the list.
+   * Fetches the full CVJob from the backend to get parsed_data + validation_result.
+   */
+  const handleOpenReview = useCallback(async (file: FileItem) => {
+    reviewFileRef.current = file
+    setReviewFile(file)
+    if (!auth.accessToken || !file.job_id) return
+    try {
+      const res = await axios.get(`${settings.backendUrl}/jobs/${file.job_id}`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+      })
+      const job = res.data
+      const updated = {
+        ...file,
+        cv_data: job.parsed_data,
+        validation_result: job.validation_result,
+      }
+      reviewFileRef.current = updated
+      setReviewFile(updated)
+    } catch {
+      // Fall back to whatever we already had
+    }
+  }, [auth.accessToken, settings.backendUrl])
+
+  /**
+   * "Save & continue" — calls PATCH /jobs/:id/review to persist edits.
+   * Does NOT approve/export. Job stays in "review" status.
+   */
+  const handleReviewSave = useCallback(async (correctedData: ParsedCVData) => {
+    const file = reviewFileRef.current
+    if (!file?.job_id || !auth.accessToken) return
+    setReviewSubmitting(true)
+    try {
+      await axios.patch(
+        `${settings.backendUrl}/jobs/${file.job_id}/review`,
+        { reviewed_data: correctedData },
+        { headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' } }
+      )
+      setFiles(prev => prev.map(f =>
+        f.id === file.id ? { ...f, cv_data: correctedData } : f
+      ))
+      showToast('✅ Đã lưu chỉnh sửa')
+      reviewFileRef.current = null
+      setReviewFile(null)
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : (err instanceof Error ? err.message : 'Lưu thất bại')
+      showToast(`❌ ${typeof msg === 'string' ? msg : 'Lưu thất bại'}`)
+    } finally {
+      setReviewSubmitting(false)
+    }
+  }, [auth.accessToken, settings.backendUrl])
+
+  /**
+   * "Approve & Export" — calls PATCH /review then POST /export.
+   * Backend checks cv:override_export permission based on user role.
+   * On success, persists data, updates file state, and auto-downloads.
+   */
+  const handleReviewApprove = useCallback(async (correctedData: ParsedCVData) => {
+    const file = reviewFileRef.current
+    if (!file?.job_id || !auth.accessToken) return
+    setReviewSubmitting(true)
+    try {
+      // Step 1: Persist reviewed data
+      await axios.patch(
+        `${settings.backendUrl}/jobs/${file.job_id}/review`,
+        { reviewed_data: correctedData },
+        { headers: { Authorization: `Bearer ${auth.accessToken}`, 'Content-Type': 'application/json' } }
+      )
+      // Step 2: Trigger export
+      const exportRes = await axios.post(
+        `${settings.backendUrl}/jobs/${file.job_id}/export`,
+        {},
+        { headers: { Authorization: `Bearer ${auth.accessToken}` } }
+      )
+      const downloadId: string | undefined = exportRes.data?.download_id
+      const downloadUrl: string | undefined = exportRes.data?.download_url
+      // Update local file state
+      setFiles(prev => prev.map(f =>
+        f.id === file.id
+          ? { ...f, status: 'success' as const, cv_data: correctedData, downloadId, downloadUrl, message: 'Phê duyệt thành công' }
+          : f
+      ))
+      showToast('✅ Phê duyệt & đang tải file...')
+      reviewFileRef.current = null
+      setReviewFile(null)
+      // Auto-download the exported DOCX
+      if (downloadId) {
+        const a = document.createElement('a')
+        a.href = `${settings.backendUrl}/download/${encodeURIComponent(downloadId)}`
+        a.download = `${file.filename}.docx`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+      } else if (downloadUrl) {
+        const a = document.createElement('a')
+        a.href = downloadUrl
+        a.download = `${file.filename}.docx`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+      }
+    } catch (err) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data as { detail?: string })?.detail ?? err.message
+        : (err instanceof Error ? err.message : 'Export thất bại')
+      showToast(`❌ ${typeof msg === 'string' ? msg : 'Export thất bại'}`)
+    } finally {
+      setReviewSubmitting(false)
+    }
+  }, [auth.accessToken, settings.backendUrl])
 
   // ── File handling ──────────────────────────────────────────
   const addFiles = (newFiles: File[]) => {
@@ -385,18 +686,24 @@ export default function App() {
         formData.append('openai_model', settings.openaiModel)
         formData.append('api_key', settings.apiKey)
 
+        // Use /jobs when authenticated (new workflow: creates DB job + returns parsed_data)
+        // Fall back to /process for anonymous usage (legacy, no job_id)
+        const endpoint = auth.accessToken ? '/jobs' : '/process'
         const res = await axios.post<ProcessResult>(
-          `${settings.backendUrl}/process`,
+          `${settings.backendUrl}${endpoint}`,
           formData,
           { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
         )
 
-        const result = res.data
+        const result = res.data as any
+        // /jobs response has validation_result; /process has reviewRequired
+        const errorCount = result.validation_result?.error_count ?? 0
+        const warnCount = result.validation_result?.warning_count ?? 0
         const reviewCount = result.reviewRequired?.length ?? 0
-        const hasReviewWarnings = reviewCount > 0
-        const newStatus = (hasReviewWarnings && result.status === 'success' ? 'partial' : result.status) as FileItem['status']
-        const statusMessage = hasReviewWarnings
-          ? `${result.message} — Need Review (${reviewCount} field${reviewCount > 1 ? 's' : ''})`
+        const hasIssues = errorCount > 0 || warnCount > 0 || reviewCount > 0
+        const newStatus = (hasIssues ? 'partial' : result.status === 'success' ? 'success' : result.status) as FileItem['status']
+        const statusMessage = hasIssues
+          ? `${result.message} — 🔍 Cần Review (${errorCount} lỗi, ${warnCount} cảnh báo)`
           : result.message
 
         setFiles(prev => prev.map(f =>
@@ -405,21 +712,27 @@ export default function App() {
                 ...f,
                 status: newStatus,
                 message: statusMessage,
-                filename: result.suggestedName
-                  ? stripExtension(result.suggestedName)
+                filename: (result as any).suggestedName
+                  ? stripExtension((result as any).suggestedName)
                   : stripExtension(f.filename),
-                downloadId: result.downloadId ?? undefined,
-                downloadUrl: result.downloadUrl ?? undefined,
-                reviewRequired: result.reviewRequired ?? undefined,
+                // New workflow fields (from /jobs endpoint)
+                job_id: (result as any).job_id ?? f.job_id,
+                cv_data: (result as any).parsed_data ?? f.cv_data,
+                validation_result: (result as any).validation_result ?? f.validation_result,
+                // Legacy fields (from /process endpoint)
+                downloadId: (result as any).downloadId ?? undefined,
+                downloadUrl: (result as any).downloadUrl ?? undefined,
+                reviewRequired: (result as any).reviewRequired ?? undefined,
               }
             : f
         ))
         addLog(`  [${file.filename}] ${newStatus.toUpperCase()}: ${statusMessage}`)
-        if (result.suggestedName) {
-          addLog(`  Suggested: ${result.suggestedName}`)
+        if ((result as any).suggestedName) {
+          addLog(`  Suggested: ${(result as any).suggestedName}`)
         }
-        if (hasReviewWarnings) {
-          addLog(`  Review fields: ${result.reviewRequired?.map(r => r.placeholder).slice(0, 5).join(', ')}`)
+        if (hasIssues) {
+          const fields = ((result as any).reviewRequired ?? []).map((r: any) => r.placeholder).slice(0, 5).join(', ')
+          if (fields) addLog(`  Review fields: ${fields}`)
         }
 
       } catch (err: unknown) {
@@ -479,11 +792,35 @@ export default function App() {
           <span className="header-title">CV Format Tool</span>
           <span className="header-sub">Navigos Search — Web</span>
         </div>
-        {/* Author credit + Settings */}
+        {/* Auth user info + Settings */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: '#8BA4C7' }}>
-            Van, Cu Thi Thuy — <strong style={{ color: '#A0B4C8' }}>Navigos Search</strong>
-          </span>
+          {auth.user ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, color: '#8BA4C7' }}>
+                  👤 <strong style={{ color: '#A0B4C8' }}>{auth.user.full_name}</strong>
+                </span>
+                <span style={{
+                  fontSize: 11, background: auth.user.role === 'admin' ? '#7C3AED' : auth.user.role === 'qc' ? '#0369A1' : '#065F46',
+                  color: '#fff', borderRadius: 10, padding: '1px 7px', fontWeight: 700,
+                }}>
+                  {auth.user.role.toUpperCase()}
+                </span>
+              </div>
+              <button
+                className="settings-btn"
+                onClick={handleLogout}
+                style={{ background: '#374151', color: '#9CA3AF' }}
+                title="Đăng xuất"
+              >
+                Đăng xuất
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-primary" onClick={() => setShowLogin(true)} style={{ padding: '4px 12px', fontSize: 12 }}>
+              🔐 Đăng nhập
+            </button>
+          )}
           <button className="settings-btn" onClick={() => setShowSettings(true)}>
             Settings
           </button>
@@ -622,6 +959,15 @@ export default function App() {
                   Download
                 </button>
               )}
+              {f.cv_data && (
+                <button
+                  className="btn"
+                  onClick={() => void handleOpenReview(f)}
+                  style={{ padding: '3px 8px', fontSize: 11, background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }}
+                >
+                  🔍 Review
+                </button>
+              )}
             </div>
           ))}
 
@@ -711,10 +1057,36 @@ export default function App() {
         />
       )}
 
+      {/* Login modal */}
+      {showLogin && (
+        <LoginModal
+          backendUrl={settings.backendUrl}
+          onSuccess={handleLoginSuccess}
+          onClose={() => setShowLogin(false)}
+        />
+      )}
+
+      {/* Review panel — full modal overlay */}
+      <ReviewPanel
+        reviewData={reviewFile ? {
+          original_filename: reviewFile.filename,
+          parsed_data: reviewFile.cv_data ?? {} as ParsedCVData,
+          validation_result: reviewFile.validation_result ?? {
+            is_valid: true, is_exportable: true,
+            error_count: 0, warning_count: 0,
+            errors: [], warnings: [], info: [], summary: '',
+          },
+        } : null}
+        isOpen={!!reviewFile}
+        onClose={() => setReviewFile(null)}
+        onSave={handleReviewSave}
+        onApprove={handleReviewApprove}
+        isSubmitting={reviewSubmitting}
+        userRole={auth.user?.role}
+      />
+
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
-      </>
-      )}
     </>
   )
 }

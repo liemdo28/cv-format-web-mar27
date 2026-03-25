@@ -213,6 +213,10 @@ class UploadResponse(BaseModel):
     file_type: str
     status: str
     message: str
+    # Extended fields for ReviewPanel integration
+    parsed_data: Optional[dict[str, Any]] = None
+    validation_result: Optional[dict[str, Any]] = None
+    download_url: Optional[str] = None
 
 @app.post("/jobs", response_model=UploadResponse, tags=["jobs"])
 async def upload_cv(
@@ -323,6 +327,9 @@ async def upload_cv(
             file_type=job.file_type,
             status="review",
             message=f"Uploaded. {validation_dict['summary']}",
+            parsed_data=cv_data,
+            validation_result=validation_dict,
+            download_url=None,  # Not ready until reviewed + approved
         )
 
     finally:
