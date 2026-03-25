@@ -236,9 +236,9 @@ function LoginModal({ onSuccess, onClose, backendUrl }: LoginModalProps) {
             )}
             <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF' }}>
               <strong>Demo accounts:</strong><br />
-              admin@ns.vn / admin123<br />
-              qc@ns.vn / qc123<br />
-              staff@ns.vn / staff123
+              admin@cvformat.local / admin123<br />
+              qc@cvformat.local / qc123<br />
+              staff@cvformat.local / staff123
             </div>
           </div>
           <div className="modal-footer">
