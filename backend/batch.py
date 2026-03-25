@@ -192,8 +192,10 @@ class BatchProcessor:
         if self._processor is None:
             # Import main app's processing logic
             from main import (
-                extract_text_from_pdf, extract_text_from_docx,
-                detect_language_from_text, extract_cv_data,
+                _extract_text_from_pdf as extract_text_from_pdf,
+                _extract_text_from_docx as extract_text_from_docx,
+                _detect_language as detect_language_from_text,
+                extract_cv_data,
                 fill_template, build_suggested_name,
                 TEMPLATE_EN, TEMPLATE_VN, OUTPUT_DIR,
             )
@@ -377,10 +379,11 @@ class BatchProcessor:
             batch.failed = failed
 
             # Update batch status
-            all_jobs = [
-                json.load(open(os.path.join(batch_dir, f), "r", encoding="utf-8"))
-                for f in os.listdir(batch_dir) if f.endswith(".json")
-            ]
+            all_jobs = []
+            for f in os.listdir(batch_dir):
+                if f.endswith(".json"):
+                    with open(os.path.join(batch_dir, f), "r", encoding="utf-8") as fh:
+                        all_jobs.append(json.load(fh))
             still_running = any(
                 j["status"] in (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.PARSED,
                                 JobStatus.VALIDATED, JobStatus.EXPORTING)
