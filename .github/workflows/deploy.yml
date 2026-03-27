@@ -33,11 +33,11 @@ jobs:
           retention-days: 1
 
   # ── Frontend: Deploy to Cloudflare Pages ────────────────────
-  # Skipped if CLOUDFLARE_ACCOUNT_ID is not set
+  # Set CLOUDFLARE_ACCOUNT_ID as a repo variable to enable this job
   deploy-frontend:
     needs: build-frontend
     runs-on: ubuntu-latest
-    if: ${{ vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    if: ${{ vars.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
       - name: Download dist artifact
         uses: actions/download-artifact@v4
@@ -48,7 +48,7 @@ jobs:
         uses: cloudflare/pages-action@v1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           projectName: cv-format-tool
           directory: dist
 
