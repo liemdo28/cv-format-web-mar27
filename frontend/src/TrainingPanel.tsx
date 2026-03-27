@@ -385,6 +385,7 @@ export default function TrainingPanel({ backendUrl, onLog, onToast }: TrainingPa
                 onClick={() => {
                   setTempRaw(null)
                   setTempDone(null)
+                  rawInputRef.current?.click() // Open raw file picker immediately
                 }}
               >
                 + Thêm cặp khác

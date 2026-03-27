@@ -20,6 +20,13 @@ from docx.oxml import OxmlElement
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+
+# PDF generation for user guideline
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib import colors
 from pydantic import BaseModel, EmailStr
 
 # ── NEW MODULES ─────────────────────────────────────────────────
@@ -88,6 +95,158 @@ async def startup():
         print("[STARTUP] Database initialized")
     except Exception as e:
         print(f"[STARTUP] DB init warning (non-fatal): {e}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ── GUIDELINE PDF ───────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+
+_guideline_cache: Optional[str] = None
+
+def _build_guideline_pdf() -> str:
+    """Generate the user guideline PDF and return its file path."""
+    out = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    out.close()
+    path = out.name
+
+    doc = SimpleDocTemplate(path, pagesize=A4,
+                            leftMargin=2*cm, rightMargin=2*cm,
+                            topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+
+    navy   = colors.HexColor("#1B3A6B")
+    accent = colors.HexColor("#2E6DB4")
+    light  = colors.HexColor("#F0F4FA")
+
+    # Custom styles
+    title_style = ParagraphStyle("Title2", parent=styles["Title"],
+                                  fontSize=20, textColor=navy,
+                                  spaceAfter=6, leading=24)
+    h1_style = ParagraphStyle("H1", parent=styles["Heading1"],
+                               fontSize=14, textColor=navy,
+                               spaceBefore=16, spaceAfter=4, leading=18)
+    h2_style = ParagraphStyle("H2", parent=styles["Heading2"],
+                               fontSize=12, textColor=accent,
+                               spaceBefore=10, spaceAfter=3, leading=16)
+    body_style = ParagraphStyle("Body2", parent=styles["Normal"],
+                                fontSize=10, leading=14, spaceAfter=4)
+    step_style = ParagraphStyle("Step", parent=styles["Normal"],
+                                 fontSize=10, leading=14,
+                                 leftIndent=14, spaceAfter=4)
+    note_style = ParagraphStyle("Note", parent=styles["Normal"],
+                                 fontSize=9, textColor=colors.HexColor("#555555"),
+                                 leading=12, spaceAfter=4, leftIndent=10)
+
+    def B(text): return f"<b>{text}</b>"
+    def I(text): return f"<i>{text}</i>"
+
+    story = []
+
+    # ── Title ──
+    story.append(Paragraph("CV Format Tool — Hướng Dẫn Sử Dụng", title_style))
+    story.append(HRFlowable(width="100%", thickness=2, color=navy, spaceAfter=10))
+
+    # ── Overview ──
+    story.append(Paragraph(B("Tổng Quan"), h1_style))
+    story.append(Paragraph(
+        "CV Format Tool là công cụ hỗ trợ định dạng CV tự động từ file PDF/Word gốc "
+        "thành file DOCX chuẩn mực, đồng bộ về layout và nội dung. "
+        "Công cụ tích hợp trí tuệ nhân tạo (Claude / OpenAI) để trích xuất và "
+        "sắp xếp thông tin, kèm chế độ Offline không cần API key.",
+        body_style))
+    story.append(Spacer(1, 6))
+
+    # ── Quick Start ──
+    story.append(Paragraph(B("1. Bắt Đầu Nhanh"), h1_style))
+    for i, (title, desc) in enumerate([
+        (B("Upload CV"), "Nhấn <b>+ Add Files</b> ở góc trái màn hình để chọn file PDF hoặc DOCX."),
+        (B("Chọn chế độ trích xuất"), "Vào <b>Settings</b> (góc phải) để chọn: Offline (không cần API), Auto, Claude, OpenAI, hoặc Ollama."),
+        (B("Xử lý"), "Nhấn <b>▶ Run</b>. File DOCX sẽ được tạo và xuất hiện ở cột phải."),
+        (B("Tải về"), "Nhấn <b>↓ Download</b> trên file đã xử lý để lưu về máy."),
+    ], 1):
+        story.append(Paragraph(f"<b> Bước {i}:</b> {title} — {desc}", step_style))
+    story.append(Spacer(1, 6))
+
+    # ── Training ──
+    story.append(Paragraph(B("2. Đào Tạo Định Dạng (Format Training)"), h1_style))
+    story.append(Paragraph(
+        "Chế độ <b>Format Training</b> cho phép bạn dạy công cụ nhận diện và định dạng "
+        "đúng theo mẫu CV của bạn. Vào tab <b>🧠 Format Training</b>:",
+        body_style))
+    for i, desc in enumerate([
+        "Chọn <b>file CV gốc</b> (Raw) → công cụ trích xuất nội dung.",
+        "Chọn <b>file CV mẫu</b> (Done) → định dạng chuẩn mong muốn.",
+        "Nhấn <b>Thêm cặp khác</b> để thêm nhiều cặp huấn luyện.",
+        "Nhấn <b>Run Training</b> để cập nhật bộ nhớ định dạng.",
+    ], 1):
+        story.append(Paragraph(f"  {i}. {desc}", step_style))
+    story.append(Paragraph(
+        I("💡 Sau khi train, công cụ sẽ ghi nhớ alias, khoảng cách tab (6cm), "
+          "in đậm nhãn mục, và các quy tắc định dạng khác."),
+        note_style))
+    story.append(Spacer(1, 6))
+
+    # ── Formatting rules ──
+    story.append(Paragraph(B("3. Quy Tắc Định Dạng Chuẩn"), h1_style))
+    rules = [
+        ("Khoảng cách Tab", "Giữa thời gian và nội dung: <b>6 cm</b> (tab stop cố định)."),
+        ("Nhãn Mục In Đậm", "Các nhãn mục (Education, Experience, Skills…) luôn được <b>in đậm</b>."),
+        ("Tên Mục Lớn", "Section label (VD: <i>KINH NGHIỆM LÀM VIỆC</i>) được <b>in đậm</b>, canh giữa."),
+        ("Thành Tích", "Achievements được <b>in đậm</b> và xếp sau nội dung chính."),
+        ("Định dạng thời gian", "Định dạng <i>MM/YYYY – MM/YYYY</i> hoặc <i>present</i>."),
+    ]
+    for title_r, desc_r in rules:
+        story.append(Paragraph(f"<b>• {title_r}:</b> {desc_r}", step_style))
+
+    story.append(Spacer(1, 6))
+
+    # ── Settings ──
+    story.append(Paragraph(B("4. Thiết Lập (Settings)"), h1_style))
+    settings_items = [
+        ("Backend URL", "Địa chỉ server, mặc định: http://localhost:8000"),
+        ("Claude API", "Nhập API key và chọn model (VD: claude-sonnet-4-20250514)."),
+        ("OpenAI API", "API key dự phòng khi Claude không khả dụng."),
+        ("Extraction Mode", "Chọn chế độ trích xuất phù hợp với nhu cầu."),
+    ]
+    for k, v in settings_items:
+        story.append(Paragraph(f"<b>• {k}:</b> {v}", step_style))
+    story.append(Spacer(1, 6))
+
+    # ── Output ──
+    story.append(Paragraph(B("5. File DOCX Đầu Ra"), h1_style))
+    story.append(Paragraph(
+        "File DOCX đầu ra có cấu trúc chuẩn: <b>font Times New Roman 12pt</b>, "
+        "canh lề trái, tab stop 6cm, các section được phân tách rõ ràng. "
+        "Có thể mở trực tiếp bằng Microsoft Word, Google Docs, hoặc LibreOffice.",
+        body_style))
+    story.append(Spacer(1, 10))
+
+    # ── Footer ──
+    story.append(HRFlowable(width="100%", thickness=1, color=accent, spaceBefore=6))
+    story.append(Paragraph(
+        I("CV Format Tool — Navigos Search | Phiên bản 2.1.0 | "
+          "Hỗ trợ: cv-format-api@ navigos.com"),
+        note_style))
+
+    doc.build(story)
+    return path
+
+
+@app.get("/guideline.pdf", tags=["system"])
+async def get_guideline():
+    """Serve the user guideline PDF. Result is cached after first generation."""
+    global _guideline_cache
+    if _guideline_cache and os.path.isfile(_guideline_cache):
+        return FileResponse(_guideline_cache, media_type="application/pdf",
+                            filename="CV_Format_Tool_Huong_Dan_Su_Dung.pdf")
+    try:
+        path = _build_guideline_pdf()
+        _guideline_cache = path
+        return FileResponse(path, media_type="application/pdf",
+                            filename="CV_Format_Tool_Huong_Dan_Su_Dung.pdf")
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Không thể tạo PDF hướng dẫn: {e}")
 
 # ═══════════════════════════════════════════════════════════════
 # ── AUTH ROUTES ────────────────────────────────────────────────
@@ -1308,6 +1467,72 @@ def _make_p(text: str, style_id: str) -> OxmlElement:
         r.append(t); p.append(r)
     return p
 
+
+def _make_bold_run(text: str) -> OxmlElement:
+    """Return a <w:r> element with bold text."""
+    r = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    b = OxmlElement('w:b')
+    rPr.append(b)
+    r.append(rPr)
+    t = OxmlElement('w:t')
+    t.text = text
+    t.set(qn('xml:space'), 'preserve')
+    r.append(t)
+    return r
+
+
+def _make_tab_run() -> OxmlElement:
+    """Return a <w:r> element containing a single tab character with a 6 cm tab stop."""
+    r = OxmlElement('w:r')
+    rPr = OxmlElement('w:rPr')
+    tabs = OxmlElement('w:tabs')
+    tab = OxmlElement('w:tab')
+    tab.set(qn('w:val'), 'left')
+    tab.set(qn('w:pos'), '1512000')   # 1512000 twips = 6 cm (1 cm = 567 twips)
+    tabs.append(tab)
+    rPr.append(tabs)
+    r.append(rPr)
+    r.append(OxmlElement('w:tab'))
+    return r
+
+
+def _make_p_with_bold_label(label: str, content: str, style_id: str) -> OxmlElement:
+    """
+    Paragraph: bold label + 6cm tab stop + normal content.
+    label: bold text shown at left; content appears after a 6 cm tab.
+    """
+    p = OxmlElement('w:p')
+    pPr = OxmlElement('w:pPr')
+    pStyle = OxmlElement('w:pStyle')
+    pStyle.set(qn('w:val'), style_id)
+    pPr.append(pStyle)
+
+    # Add 6 cm tab stop to paragraph
+    tabs_el = OxmlElement('w:tabs')
+    tab_el = OxmlElement('w:tab')
+    tab_el.set(qn('w:val'), 'left')
+    tab_el.set(qn('w:pos'), '1512000')
+    tabs_el.append(tab_el)
+    pPr.append(tabs_el)
+
+    p.append(pPr)
+
+    # Bold label run
+    if label:
+        p.append(_make_bold_run(label))
+    # Tab
+    p.append(_make_tab_run())
+    # Content run (not bold)
+    if content:
+        r = OxmlElement('w:r')
+        t = OxmlElement('w:t')
+        t.text = content
+        t.set(qn('xml:space'), 'preserve')
+        r.append(t)
+        p.append(r)
+    return p
+
 def _populate_toc(body, career_summary: list):
     sdt_el = next((c for c in body if c.tag.split('}')[-1] == 'sdt'), None)
     if sdt_el is None: return
@@ -1410,9 +1635,56 @@ def fill_template(template_path: str, cv_data: dict, client_name: str,
     if other_el:
         ins = other_el
         for section in cv_data.get("other_info", []):
-            p = _make_p(section.get("section_title", ""), "Normal"); ins.addnext(p); ins = p
+            # Section title — bold, normal style
+            title = section.get("section_title", "")
+            p = _make_p(title, "Normal")
+            # Ensure the section title run is bold
+            for r_el in p.findall(qn('w:r')):
+                rPr = r_el.find(qn('w:rPr'))
+                if rPr is None:
+                    rPr = OxmlElement('w:rPr')
+                    r_el.insert(0, rPr)
+                b = OxmlElement('w:b')
+                rPr.append(b)
+            ins.addnext(p); ins = p
+
+            # Optional marked label (e.g. "Accountability:", "Duties:")
+            section_label = section.get("section_label", "").strip()
+            if section_label:
+                p_lbl = _make_p_with_bold_label(section_label, "", "Normal")
+                ins.addnext(p_lbl); ins = p_lbl
+
             for item in section.get("items", []):
-                p = _make_p(item, sid("1.Content")); ins.addnext(p); ins = p
+                # other_info.items may be plain strings (offline) or dicts (AI path)
+                if isinstance(item, dict):
+                    marked = item.get("marked_label", "").strip()
+                    marked_content = item.get("marked_content", "").strip()
+                    if marked and marked_content:
+                        p = _make_p_with_bold_label(marked, marked_content, sid("1.Content"))
+                    else:
+                        p = _make_p(item.get("text", "") or "", sid("1.Content"))
+                else:
+                    # Plain string item — just render normally
+                    p = _make_p(str(item), sid("1.Content"))
+                ins.addnext(p); ins = p
+
+            # Optional achievements label + achievements
+            achievements_label = section.get("achievements_label", "").strip()
+            if achievements_label:
+                p_albl = _make_p_with_bold_label(achievements_label, "", "Normal")
+                ins.addnext(p_albl); ins = p_albl
+            for ach in section.get("achievements", []):
+                p = _make_p(ach, sid("1.Content"))
+                # Make achievements bold
+                for r_el in p.findall(qn('w:r')):
+                    rPr = r_el.find(qn('w:rPr'))
+                    if rPr is None:
+                        rPr = OxmlElement('w:rPr')
+                        r_el.insert(0, rPr)
+                    b = OxmlElement('w:b')
+                    rPr.append(b)
+                ins.addnext(p); ins = p
+
             p = _make_p("", "Normal"); ins.addnext(p); ins = p
     doc.save(output_path)
 

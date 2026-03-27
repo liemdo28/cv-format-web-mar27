@@ -336,9 +336,15 @@ export default function App() {
     setTimeout(() => setToast(null), 3000)
   }
 
+
   // ── Helpers ────────────────────────────────────────────────────
   function normalizeBackendUrl(url: string): string {
     return url.trim().replace(/\/+$/, '')
+  }
+
+  const openGuideline = () => {
+    const url = `${normalizeBackendUrl(settings.backendUrl)}/guideline.pdf`
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   function isDownloadable(file: FileItem): boolean {
@@ -821,11 +827,14 @@ export default function App() {
           <span className="header-title">CV Format Tool</span>
           <span className="header-sub">Navigos Search — Web</span>
         </div>
-        {/* Auth user info + Settings */}
+        {/* Author + toolbar buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 12, color: '#8BA4C7' }}>
-            Public Testing Mode
+          <span style={{ fontSize: 12, color: '#A8C8E8', fontWeight: 600 }}>
+            Van, Cu Thi Thuy
           </span>
+          <button className="settings-btn" onClick={openGuideline}>
+            Guideline
+          </button>
           <button className="settings-btn" onClick={() => setShowSettings(true)}>
             Settings
           </button>
