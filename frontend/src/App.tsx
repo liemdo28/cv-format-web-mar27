@@ -696,14 +696,33 @@ export default function App() {
         formData.append('openai_model', settings.openaiModel)
         formData.append('api_key', settings.apiKey)
 
-        // Use /jobs when authenticated (new workflow: creates DB job + returns parsed_data)
-        // Fall back to /process for anonymous usage (legacy, no job_id)
-        const endpoint = auth.accessToken ? '/jobs' : '/process'
-        const res = await axios.post<ProcessResult>(
-          `${settings.backendUrl}${endpoint}`,
-          formData,
-          { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
-        )
+        // Try /jobs first (new workflow with DB + review), fall back to /process (legacy)
+        let res: import('axios').AxiosResponse<ProcessResult>
+        try {
+          res = await axios.post<ProcessResult>(
+            `${settings.backendUrl}/jobs`,
+            formData,
+            { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
+          )
+        } catch (jobErr) {
+          if (axios.isAxiosError(jobErr) && jobErr.response?.status === 404) {
+            // /jobs not available — use legacy /process endpoint
+            const fallbackForm = new FormData()
+            if (file.file) fallbackForm.append('file', file.file)
+            fallbackForm.append('extraction_mode', settings.extractionMode)
+            fallbackForm.append('model', settings.model)
+            fallbackForm.append('openai_api_key', settings.openaiApiKey)
+            fallbackForm.append('openai_model', settings.openaiModel)
+            fallbackForm.append('api_key', settings.apiKey)
+            res = await axios.post<ProcessResult>(
+              `${settings.backendUrl}/process`,
+              fallbackForm,
+              { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
+            )
+          } else {
+            throw jobErr
+          }
+        }
 
         const result = res.data as any
         // /jobs response has validation_result; /process has reviewRequired
