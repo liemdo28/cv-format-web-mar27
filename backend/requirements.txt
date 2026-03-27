@@ -7,19 +7,16 @@ PyMuPDF>=1.24.0
 python-docx>=1.1.2
 pydantic>=2.10.0
 email-validator>=2.0.0
-google-api-python-client>=2.100.0
-google-auth>=2.27.0
 
-# ── NEW: Production additions ────────────────────────────────────
+# ── Auth & DB ─────────────────────────────────────────────────────
 sqlalchemy>=2.0.0
 PyJWT>=2.8.0
 bcrypt>=4.1.0
-python-jose[cryptography]>=3.3.0
 
-# ── OCR (optional — install for scanned PDF support) ────────────
-# Install ONE of: pytesseract (recommended) or easyocr
-# pytesseract requires system Tesseract: apt install tesseract-ocr tesseract-ocr-vie
+# ── Google Drive (optional — lazy import in drive_utils.py) ───────
+google-api-python-client>=2.100.0
+google-auth>=2.27.0
+
+# ── OCR (optional — for scanned PDF support) ──────────────────────
 pytesseract>=0.3.10
 Pillow>=10.0.0
-# easyocr>=1.7.0  # Alternative: heavier but no system dependency
-
