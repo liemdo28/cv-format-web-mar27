@@ -824,8 +824,8 @@ async def get_stats(
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/health", tags=["system"])
-async def health_check():
-    """Enhanced health check with DB + processor + OCR status."""
+async def health_check(api_key: str = "", openai_api_key: str = ""):
+    """Enhanced health check with DB + processor + OCR + AI provider status."""
     ocr_status = "unavailable"
     ocr_backend = "none"
     try:
@@ -836,9 +836,59 @@ async def health_check():
     except ImportError:
         pass
 
+    # ── Check AI providers ──────────────────────────────────────
+    claude_status = "unavailable"
+    if api_key:
+        try:
+            import anthropic as _anth
+            client = _anth.Anthropic(api_key=api_key)
+            # Minimal API call to verify key works
+            client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=5,
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            claude_status = "ok"
+        except Exception as e:
+            err = str(e).lower()
+            if "credit" in err or "billing" in err or "payment" in err:
+                claude_status = "no_credit"
+            elif "invalid" in err or "auth" in err or "api key" in err:
+                claude_status = "invalid_key"
+            else:
+                claude_status = "error"
+
+    openai_status = "unavailable"
+    if openai_api_key:
+        try:
+            import openai as _openai
+            client = _openai.OpenAI(api_key=openai_api_key)
+            client.models.list()
+            openai_status = "ok"
+        except Exception as e:
+            err = str(e).lower()
+            if "quota" in err or "billing" in err or "exceeded" in err:
+                openai_status = "quota_exceeded"
+            elif "invalid" in err or "auth" in err:
+                openai_status = "invalid_key"
+            else:
+                openai_status = "error"
+
+    ollama_status = "unavailable"
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://localhost:11434/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=3):
+            ollama_status = "ok"
+    except Exception:
+        pass
+
     return {
         "status": "ok",
         "version": "2.1.0",
+        "claude": claude_status,
+        "openai": openai_status,
+        "ollama": ollama_status,
         "timestamp": datetime.utcnow().isoformat(),
         "components": {
             "database": "ok",
