@@ -898,9 +898,12 @@ async def health_check(api_key: str = "", openai_api_key: str = ""):
     except Exception:
         pass
 
+    template_en_ok = os.path.exists(TEMPLATE_EN)
+    template_vn_ok = os.path.exists(TEMPLATE_VN)
+
     return {
         "status": "ok",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "claude": claude_status,
         "openai": openai_status,
         "ollama": ollama_status,
@@ -911,6 +914,8 @@ async def health_check(api_key: str = "", openai_api_key: str = ""):
             "validation_engine": "ok",
             "ocr": ocr_status,
             "ocr_backend": ocr_backend,
+            "template_en": "ok" if template_en_ok else f"missing ({TEMPLATE_EN})",
+            "template_vn": "ok" if template_vn_ok else f"missing ({TEMPLATE_VN})",
         }
     }
 
@@ -1027,11 +1032,29 @@ async def process_cv_legacy(
         os.makedirs(output_dir, exist_ok=True)
         output_docx = os.path.join(output_dir, f"{safe_name}.docx")
 
-        if extraction_mode == "offline":
-            from offline_engine import fill_template_offline
-            fill_template_offline(template_path, output_docx, cv_data)
-        else:
-            fill_template(template_path, cv_data, "CLIENT", "POSITION", output_docx)
+        if not os.path.exists(template_path):
+            # Template missing — return parsed data without DOCX generation
+            return ProcessResponse(
+                status="success",
+                message=f"Parsed ({lang.upper()}) — template not available for DOCX",
+                suggestedName=suggested_name,
+                reviewRequired=review_required,
+            )
+
+        try:
+            if extraction_mode == "offline":
+                from offline_engine import fill_template_offline
+                fill_template_offline(template_path, output_docx, cv_data)
+            else:
+                fill_template(template_path, cv_data, "CLIENT", "POSITION", output_docx)
+        except Exception as e:
+            # Template fill failed — return parsed data with error note
+            return ProcessResponse(
+                status="success",
+                message=f"Parsed ({lang.upper()}) — DOCX fill error: {e}",
+                suggestedName=suggested_name,
+                reviewRequired=review_required,
+            )
 
         return ProcessResponse(
             status="success",
@@ -1105,6 +1128,21 @@ TEMPLATE_EN = os.path.join(BASE_DIR, "templates", "Form EN 2024.docx")
 TEMPLATE_VN = os.path.join(BASE_DIR, "templates", "Form VN 2024.docx")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Log template availability at startup
+for _tpl_name, _tpl_path in [("EN", TEMPLATE_EN), ("VN", TEMPLATE_VN)]:
+    if os.path.exists(_tpl_path):
+        print(f"[TEMPLATE] {_tpl_name}: OK ({_tpl_path})")
+    else:
+        print(f"[TEMPLATE] {_tpl_name}: MISSING ({_tpl_path})")
+        # Try to find templates relative to working directory
+        _alt = os.path.join("templates", f"Form {_tpl_name} 2024.docx")
+        if os.path.exists(_alt):
+            print(f"[TEMPLATE] {_tpl_name}: Found at alt path ({os.path.abspath(_alt)})")
+            if _tpl_name == "EN":
+                TEMPLATE_EN = os.path.abspath(_alt)
+            else:
+                TEMPLATE_VN = os.path.abspath(_alt)
 
 # ── Local helpers (reused from original) ──────────────────────
 
