@@ -57,17 +57,28 @@ _PUBLIC_USER = CurrentUser(id="public-user", email="public@cvformat.local", role
 def _public_user():
     return _PUBLIC_USER
 
+# Create shared permission dependency instances (must reuse same object in overrides AND endpoints)
+perm_cv_upload = require_permission("cv:upload")
+perm_cv_review = require_permission("cv:review")
+perm_cv_qc = require_permission("cv:qc")
+perm_cv_export = require_permission("cv:export")
+perm_cv_view_all = require_permission("cv:view_all")
+perm_user_read = require_permission("user:read")
+perm_user_create = require_permission("user:create")
+perm_user_update = require_permission("user:update")
+perm_audit_read = require_permission("audit:read")
+
 # Override auth dependencies so no login is needed
 app.dependency_overrides[get_current_user] = _public_user
-app.dependency_overrides[require_permission("cv:upload")] = _public_user
-app.dependency_overrides[require_permission("cv:review")] = _public_user
-app.dependency_overrides[require_permission("cv:qc")] = _public_user
-app.dependency_overrides[require_permission("cv:export")] = _public_user
-app.dependency_overrides[require_permission("cv:view_all")] = _public_user
-app.dependency_overrides[require_permission("user:read")] = _public_user
-app.dependency_overrides[require_permission("user:create")] = _public_user
-app.dependency_overrides[require_permission("user:update")] = _public_user
-app.dependency_overrides[require_permission("audit:read")] = _public_user
+app.dependency_overrides[perm_cv_upload] = _public_user
+app.dependency_overrides[perm_cv_review] = _public_user
+app.dependency_overrides[perm_cv_qc] = _public_user
+app.dependency_overrides[perm_cv_export] = _public_user
+app.dependency_overrides[perm_cv_view_all] = _public_user
+app.dependency_overrides[perm_user_read] = _public_user
+app.dependency_overrides[perm_user_create] = _public_user
+app.dependency_overrides[perm_user_update] = _public_user
+app.dependency_overrides[perm_audit_read] = _public_user
 
 # ── DB Init on startup ──────────────────────────────────────────
 @app.on_event("startup")
@@ -156,7 +167,7 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
 
 @app.get("/users", tags=["users"])
 async def list_users(
-    current_user: CurrentUser = Depends(require_permission("user:read"))
+    current_user: CurrentUser = Depends(perm_user_read)
 ):
     """List all users (admin only)."""
     with get_db_session() as session:
@@ -166,7 +177,7 @@ async def list_users(
 @app.post("/users", tags=["users"])
 async def create_user(
     payload: UserCreateRequest,
-    current_user: CurrentUser = Depends(require_permission("user:create")),
+    current_user: CurrentUser = Depends(perm_user_create),
     request: Request = None,
 ):
     """Create a new user."""
@@ -198,7 +209,7 @@ async def create_user(
 async def update_user(
     user_id: str,
     payload: dict,
-    current_user: CurrentUser = Depends(require_permission("user:update")),
+    current_user: CurrentUser = Depends(perm_user_update),
 ):
     """Update user (admin only)."""
     with get_db_session() as session:
@@ -237,7 +248,11 @@ class UploadResponse(BaseModel):
 async def upload_cv(
     file: UploadFile = File(...),
     extraction_mode: str = Form("auto"),
-    current_user: CurrentUser = Depends(require_permission("cv:upload")),
+    api_key: str = Form(""),
+    model: str = Form("claude-sonnet-4-20250514"),
+    openai_api_key: str = Form(""),
+    openai_model: str = Form("gpt-4o-mini"),
+    current_user: CurrentUser = Depends(perm_cv_upload),
     request: Request = None,
 ):
     """
@@ -297,8 +312,8 @@ async def upload_cv(
             suggested_name = build_suggested_name_offline(cv_data)
         else:
             cv_data = extract_cv_data(
-                cv_text, "", "claude-sonnet-4-20250514",
-                extraction_mode, "", "gpt-4o-mini"
+                cv_text, api_key, model,
+                extraction_mode, openai_api_key, openai_model
             )
             suggested_name = build_suggested_name(cv_data)
 
@@ -409,7 +424,7 @@ class ReviewUpdate(BaseModel):
 async def review_job(
     job_id: str,
     payload: ReviewUpdate,
-    current_user: CurrentUser = Depends(require_permission("cv:review")),
+    current_user: CurrentUser = Depends(perm_cv_review),
     request: Request = None,
 ):
     """Staff reviews and corrects parsed CV data."""
@@ -478,7 +493,7 @@ class QCRequest(BaseModel):
 async def qc_job(
     job_id: str,
     payload: QCRequest,
-    current_user: CurrentUser = Depends(require_permission("cv:qc")),
+    current_user: CurrentUser = Depends(perm_cv_qc),
     request: Request = None,
 ):
     """QC reviewer approves or rejects a CV."""
@@ -526,7 +541,7 @@ async def export_job(
     job_id: str,
     client_name: str = Form("CLIENT"),
     position: str = Form("POSITION"),
-    current_user: CurrentUser = Depends(require_permission("cv:export")),
+    current_user: CurrentUser = Depends(perm_cv_export),
     request: Request = None,
 ):
     """Export approved CV to formatted DOCX."""
@@ -624,7 +639,7 @@ async def create_batch(
     files: list[UploadFile] = File(...),
     extraction_mode: str = Form("auto"),
     batch_name: str = Form(""),
-    current_user: CurrentUser = Depends(require_permission("cv:upload")),
+    current_user: CurrentUser = Depends(perm_cv_upload),
 ):
     """
     Upload multiple CVs and process them in parallel.
@@ -718,7 +733,7 @@ async def list_all_batches(
 @app.delete("/batch/{batch_id}", tags=["batch"])
 async def cancel_batch(
     batch_id: str,
-    current_user: CurrentUser = Depends(require_permission("cv:upload")),
+    current_user: CurrentUser = Depends(perm_cv_upload),
 ):
     """Cancel a running batch. Staff can only cancel their own batches."""
     processor = get_processor()
@@ -757,7 +772,7 @@ async def validate_cv(
 async def get_audit_log(
     limit: int = 50,
     action: Optional[str] = None,
-    current_user: CurrentUser = Depends(require_permission("audit:read")),
+    current_user: CurrentUser = Depends(perm_audit_read),
 ):
     """Get audit log entries."""
     with get_db_session() as session:
@@ -773,7 +788,7 @@ async def get_audit_log(
 
 @app.get("/stats", tags=["admin"])
 async def get_stats(
-    current_user: CurrentUser = Depends(require_permission("cv:view_all")),
+    current_user: CurrentUser = Depends(perm_cv_view_all),
 ):
     """KPI dashboard: CV throughput, error rate, time metrics."""
     with get_db_session() as session:
