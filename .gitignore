@@ -9,3 +9,4 @@ get_refresh_token.py
 
 # Keep learning_store.json tracked (organizational knowledge)
 learning_store.json
+client_secret.json.json
