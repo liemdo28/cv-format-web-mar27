@@ -33,9 +33,11 @@ jobs:
           retention-days: 1
 
   # ── Frontend: Deploy to Cloudflare Pages ────────────────────
+  # Skipped if CLOUDFLARE_ACCOUNT_ID is not set
   deploy-frontend:
     needs: build-frontend
     runs-on: ubuntu-latest
+    if: ${{ vars.CLOUDFLARE_ACCOUNT_ID != '' || secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
     steps:
       - name: Download dist artifact
         uses: actions/download-artifact@v4

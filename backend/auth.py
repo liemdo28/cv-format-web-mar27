@@ -13,14 +13,11 @@ from typing import Any, Optional
 
 import jwt
 
-# ── Runtime config validation (fail fast on missing secrets) ──
+# ── Runtime config (public mode: auto-generate secret if not set) ──
 _JWT_SECRET_FROM_ENV = os.environ.get("JWT_SECRET")
 if not _JWT_SECRET_FROM_ENV:
-    raise RuntimeError(
-        "[AUTH] JWT_SECRET environment variable is REQUIRED. "
-        "Set it before starting: export JWT_SECRET=$(openssl rand -hex 32) "
-        "Never use a fallback secret in production — tokens will be invalid after restart."
-    )
+    _JWT_SECRET_FROM_ENV = secrets.token_hex(32)
+    print("[AUTH] JWT_SECRET not set — generated temporary secret (public testing mode)")
 
 SECRET_KEY: str = _JWT_SECRET_FROM_ENV
 JWT_ALGORITHM: str = "HS256"

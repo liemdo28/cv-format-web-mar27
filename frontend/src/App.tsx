@@ -14,12 +14,18 @@ interface AuthState {
   refreshToken: string | null
 }
 
+// ── PUBLIC MODE: auto-logged-in as admin for team testing ────
 function loadAuth(): AuthState {
-  try {
-    const raw = localStorage.getItem('cvformat-auth-v2')
-    return raw ? JSON.parse(raw) : { user: null, accessToken: null, refreshToken: null }
-  } catch {
-    return { user: null, accessToken: null, refreshToken: null }
+  return {
+    user: {
+      id: 'public-user',
+      email: 'public@cvformat.local',
+      full_name: 'Team User',
+      role: 'admin',
+      is_active: true,
+    },
+    accessToken: 'public-mode',
+    refreshToken: null,
   }
 }
 
@@ -443,12 +449,6 @@ export default function App() {
     addLog(`✅ Đăng nhập thành công: ${user.full_name} (${user.role})`)
   }, [addLog])
 
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem('cvformat-auth-v2')
-    setAuth({ user: null, accessToken: null, refreshToken: null })
-    setShowLogin(true)
-    addLog('👋 Đã đăng xuất')
-  }, [addLog])
 
   // ── Review panel handlers ─────────────────────────────────────
   /**
@@ -789,33 +789,9 @@ export default function App() {
         </div>
         {/* Auth user info + Settings */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {auth.user ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 12, color: '#8BA4C7' }}>
-                  👤 <strong style={{ color: '#A0B4C8' }}>{auth.user.full_name}</strong>
-                </span>
-                <span style={{
-                  fontSize: 11, background: auth.user.role === 'admin' ? '#7C3AED' : auth.user.role === 'qc' ? '#0369A1' : '#065F46',
-                  color: '#fff', borderRadius: 10, padding: '1px 7px', fontWeight: 700,
-                }}>
-                  {auth.user.role.toUpperCase()}
-                </span>
-              </div>
-              <button
-                className="settings-btn"
-                onClick={handleLogout}
-                style={{ background: '#374151', color: '#9CA3AF' }}
-                title="Đăng xuất"
-              >
-                Đăng xuất
-              </button>
-            </>
-          ) : (
-            <button className="btn btn-primary" onClick={() => setShowLogin(true)} style={{ padding: '4px 12px', fontSize: 12 }}>
-              🔐 Đăng nhập
-            </button>
-          )}
+          <span style={{ fontSize: 12, color: '#8BA4C7' }}>
+            Public Testing Mode
+          </span>
           <button className="settings-btn" onClick={() => setShowSettings(true)}>
             Settings
           </button>

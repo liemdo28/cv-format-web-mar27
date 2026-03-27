@@ -40,19 +40,34 @@ from batch import (
 # ── App Setup ───────────────────────────────────────────────────
 app = FastAPI(title="CV Format Tool API", version="2.1.0")
 
-# ── CORS: Lock down to specific origins in production ───────────
-ALLOWED_ORIGINS = os.environ.get(
-    "CORS_ORIGINS",
-    "http://localhost:5173,http://localhost:3000,http://localhost:8000"
-).split(",")
-
+# ── CORS: Allow all origins for public testing ───────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# ── PUBLIC MODE: bypass all auth for team testing ────────────────
+# All endpoints are accessible without login.
+# A default "public" admin user is injected into every request.
+_PUBLIC_USER = CurrentUser(id="public-user", email="public@cvformat.local", role="admin")
+
+def _public_user():
+    return _PUBLIC_USER
+
+# Override auth dependencies so no login is needed
+app.dependency_overrides[get_current_user] = _public_user
+app.dependency_overrides[require_permission("cv:upload")] = _public_user
+app.dependency_overrides[require_permission("cv:review")] = _public_user
+app.dependency_overrides[require_permission("cv:qc")] = _public_user
+app.dependency_overrides[require_permission("cv:export")] = _public_user
+app.dependency_overrides[require_permission("cv:view_all")] = _public_user
+app.dependency_overrides[require_permission("user:read")] = _public_user
+app.dependency_overrides[require_permission("user:create")] = _public_user
+app.dependency_overrides[require_permission("user:update")] = _public_user
+app.dependency_overrides[require_permission("audit:read")] = _public_user
 
 # ── DB Init on startup ──────────────────────────────────────────
 @app.on_event("startup")
