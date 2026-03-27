@@ -276,35 +276,18 @@ def init_db():
 
 
 def _seed_default_admin():
-    """Create default admin if not exists."""
+    """Create default admin if not exists (no demo users)."""
     from auth import hash_password
     with get_db_session() as session:
         existing = session.query(User).filter(User.role == "admin").first()
         if not existing:
             admin = User(
                 email="admin@cvformat.local",
-                hashed_password=hash_password("admin123"),
+                hashed_password=hash_password("liem@dt2155"),
                 full_name="System Admin",
                 role="admin",
                 is_active=True,
             )
             session.add(admin)
-            # Add sample staff and QC users
-            staff = User(
-                email="staff@cvformat.local",
-                hashed_password=hash_password("staff123"),
-                full_name="Staff User",
-                role="staff",
-                is_active=True,
-            )
-            session.add(staff)
-            qc = User(
-                email="qc@cvformat.local",
-                hashed_password=hash_password("qc123"),
-                full_name="QC User",
-                role="qc",
-                is_active=True,
-            )
-            session.add(qc)
             session.commit()
-            print("[DB] Seeded default users (admin/staff/qc)")
+            print("[DB] Seeded default admin user")
