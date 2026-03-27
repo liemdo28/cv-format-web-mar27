@@ -623,37 +623,52 @@ export default function App() {
           timeout: 15000,
         })
         providerStatus = res.data
+        const providerKeys = ['claude', 'openai', 'ollama']
         for (const [provider, status] of Object.entries(providerStatus)) {
+          if (!providerKeys.includes(provider) && typeof status !== 'string') continue
           const icons: Record<string, string> = {
             ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
             quota_exceeded: '⚠️', error: '❌'
           }
           const icon = icons[status as string] ?? '❓'
-          addLog(`  ${provider}: ${icon} ${status}`)
+          if (providerKeys.includes(provider)) {
+            addLog(`  ${provider}: ${icon} ${status}`)
+          }
         }
       } catch {
         addLog('  (health check failed, proceeding anyway)')
       }
 
-      hasClaude = providerStatus['claude'] === 'ok'
-      hasOpenAI = providerStatus['openai'] === 'ok'
-      hasOllama = providerStatus['ollama'] === 'ok'
+      // Check provider status from health response (if backend supports it)
+      const hasProviderFields = 'claude' in providerStatus || 'openai' in providerStatus || 'ollama' in providerStatus
+
+      if (hasProviderFields) {
+        hasClaude = providerStatus['claude'] === 'ok'
+        hasOpenAI = providerStatus['openai'] === 'ok'
+        hasOllama = providerStatus['ollama'] === 'ok'
+      } else {
+        // Backend doesn't report provider status — assume available if keys are set
+        hasClaude = !!settings.apiKey
+        hasOpenAI = !!settings.openaiApiKey
+        hasOllama = false
+      }
 
       if (!hasClaude && !hasOpenAI && !hasOllama) {
         const hints: string[] = []
         if (!settings.apiKey) hints.push('Claude: chưa nhập key')
         else if (providerStatus['claude'] === 'no_credit') hints.push('Claude: HẾT CREDIT - nạp tiền tại console.anthropic.com')
         else if (providerStatus['claude'] === 'invalid_key') hints.push('Claude: API key SAI - kiểm tra lại key')
-        else hints.push('Claude: lỗi')
+        else if (providerStatus['claude'] === 'error') hints.push('Claude: lỗi kết nối - kiểm tra lại key')
+        else hints.push('Claude: chưa nhập key')
 
         if (!settings.openaiApiKey) hints.push('OpenAI: chưa nhập key')
         else if (providerStatus['openai'] === 'invalid_key') hints.push('OpenAI: API key sai')
         else if (providerStatus['openai'] === 'quota_exceeded') hints.push('OpenAI: HẾT QUOTA - nạp tiền tại platform.openai.com')
-        else hints.push('OpenAI: lỗi')
+        else hints.push('OpenAI: chưa nhập key')
 
         hints.push('Ollama: chưa chạy (chạy "ollama serve")')
 
-        showToast('Không có AI provider nào khả dụng!')
+        showToast('Không có AI provider nào khả dụng! Nhập API key trong Settings hoặc dùng Offline mode.')
         addLog('❌ No AI provider available:')
         hints.forEach(h => addLog(`  - ${h}`))
         return
