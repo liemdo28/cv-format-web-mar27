@@ -235,10 +235,7 @@ function LoginModal({ onSuccess, onClose, backendUrl }: LoginModalProps) {
               </div>
             )}
             <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF' }}>
-              <strong>Demo accounts:</strong><br />
-              admin@cvformat.local / admin123<br />
-              qc@cvformat.local / qc123<br />
-              staff@cvformat.local / staff123
+              Liên hệ Admin để được cấp tài khoản.
             </div>
           </div>
           <div className="modal-footer">
