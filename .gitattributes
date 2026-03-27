@@ -1,0 +1,9 @@
+# Treat DOCX as binary to prevent line-ending corruption
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

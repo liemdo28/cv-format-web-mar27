@@ -1124,8 +1124,8 @@ CV TEXT:
 
 # ── Paths ──────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_EN = os.path.join(BASE_DIR, "templates", "Form EN 2024.docx")
-TEMPLATE_VN = os.path.join(BASE_DIR, "templates", "Form VN 2024.docx")
+TEMPLATE_EN = os.path.join(BASE_DIR, "templates", "Form_EN_2024.docx")
+TEMPLATE_VN = os.path.join(BASE_DIR, "templates", "Form_VN_2024.docx")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -1135,14 +1135,6 @@ for _tpl_name, _tpl_path in [("EN", TEMPLATE_EN), ("VN", TEMPLATE_VN)]:
         print(f"[TEMPLATE] {_tpl_name}: OK ({_tpl_path})")
     else:
         print(f"[TEMPLATE] {_tpl_name}: MISSING ({_tpl_path})")
-        # Try to find templates relative to working directory
-        _alt = os.path.join("templates", f"Form {_tpl_name} 2024.docx")
-        if os.path.exists(_alt):
-            print(f"[TEMPLATE] {_tpl_name}: Found at alt path ({os.path.abspath(_alt)})")
-            if _tpl_name == "EN":
-                TEMPLATE_EN = os.path.abspath(_alt)
-            else:
-                TEMPLATE_VN = os.path.abspath(_alt)
 
 # ── Local helpers (reused from original) ──────────────────────
 
