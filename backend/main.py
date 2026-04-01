@@ -703,7 +703,16 @@ async def export_job(
     current_user: CurrentUser = Depends(perm_cv_export),
     request: Request = None,
 ):
-    """Export approved CV to formatted DOCX."""
+    """
+    Export approved CV to formatted DOCX.
+
+    BA Rules enforced at export time:
+    1. Output filename: CLIENT (UPPER) - Position - CandidateName
+    2. Section title: Must be "Navigos Search's Assessment"
+    3. Working Experience: H1/H2/H3 structure enforced
+    4. Style system: Style 2 vs Style 3 separation
+    5. TOC: Must have entries (positions required)
+    """
     with get_db_session() as session:
         job = session.query(CVJob).filter(CVJob.id == job_id).first()
         if not job:
@@ -720,30 +729,57 @@ async def export_job(
         if not cv_data:
             raise HTTPException(status_code=400, detail="No CV data to export")
 
-        # Run validation on the actual data we're about to export
-        validation = validate_cv_data(cv_data)
-        if not validation.is_valid:
-            if not has_permission(current_user.role, "cv:override_export"):
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        "CV has blocking validation errors and you do not have "
-                        "permission to override. Fix the errors first or contact a QC/Admin."
-                    ),
-                )
+        # Build output filename for validation (BA Rule 1)
+        full_name = cv_data.get("full_name", "") or "Candidate"
+        output_filename = f"{client_name.upper()} - {position} - {full_name}"
+
+        # Run FULL validation including BA rules
+        validation = validate_cv_data(cv_data, output_filename=output_filename)
+
+        # Collect all ERROR-level issues for the response
+        blocking_errors = validation.errors
+
+        if blocking_errors and not has_permission(current_user.role, "cv:override_export"):
+            error_details = "; ".join(
+                f"[{e.code}] {e.message}" for e in blocking_errors
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"CV có {len(blocking_errors)} lỗi nghiêm trọng (không thể export):\n"
+                    f"{error_details}\n\n"
+                    f"Sửa các lỗi trên trong Review panel hoặc liên hệ QC/Admin để override."
+                ),
+            )
+
+        # If override allowed (QC/Admin), still warn but allow
+        if blocking_errors:
+            # Log warning for audit but allow export
+            log_action(
+                current_user.id, current_user.role, "export_override",
+                resource_type="cv_job", resource_id=job_id,
+                details={
+                    "client": client_name,
+                    "position": position,
+                    "errors": [e.code for e in blocking_errors],
+                    "overridden_by": current_user.role,
+                },
+                request=request,
+            )
 
         lang = _detect_language(str(cv_data))
         template_path = TEMPLATE_VN if lang == "vi" else TEMPLATE_EN
 
-        # Generate output
+        # Generate output filename (spaces → underscores for filesystem)
+        safe_name = re.sub(r"[^\w\s.-]", "", output_filename).strip()
+        safe_name = re.sub(r"\s+", "_", safe_name)[:100]
+
         download_id = str(uuid.uuid4())[slice(0, 8)]
-        safe_name = re.sub(r"[^\w\s.-]", "", (job.output_filename or job.original_filename or "cv")).strip()
-        safe_name = re.sub(r"\s+", "_", safe_name)[slice(0, 100)]
         output_dir = os.path.join(OUTPUT_DIR, download_id)
         os.makedirs(output_dir, exist_ok=True)
         output_docx = os.path.join(output_dir, f"{safe_name}.docx")
 
-        fill_template(template_path, cv_data, client_name, position, output_docx)
+        fill_template(template_path, cv_data, client_name.upper(), position, output_docx)
 
         # Update job
         job.status = "exported"
@@ -756,18 +792,35 @@ async def export_job(
         log_action(
             current_user.id, current_user.role, "export",
             resource_type="cv_job", resource_id=job_id,
-            details={"client": client_name, "position": position, "filename": f"{safe_name}.docx"},
+            details={
+                "client": client_name.upper(),
+                "position": position,
+                "filename": f"{safe_name}.docx",
+                "validation_passed": len(blocking_errors) == 0,
+            },
             request=request,
         )
         session.commit()
 
-        return {
+        # Return result including validation warnings (non-blocking)
+        response = {
             "ok": True,
             "message": "CV exported successfully",
             "download_id": download_id,
             "download_url": f"/download/{download_id}",
             "filename": f"{safe_name}.docx",
+            "output_filename": output_filename,   # BA Rule 1: validated name
+            "validation_passed": len(blocking_errors) == 0,
         }
+        if validation.warnings:
+            response["warnings"] = [
+                {"code": w.code, "message": w.message} for w in validation.warnings
+            ]
+        if blocking_errors:
+            response["blocking_errors"] = [
+                {"code": e.code, "message": e.message} for e in blocking_errors
+            ]
+        return response
 
 
 @app.get("/jobs/{job_id}/versions", tags=["jobs"])
@@ -798,6 +851,10 @@ async def create_batch(
     files: list[UploadFile] = File(...),
     extraction_mode: str = Form("auto"),
     batch_name: str = Form(""),
+    api_key: str = Form(""),
+    openai_api_key: str = Form(""),
+    openai_model: str = Form("gpt-4o-mini"),
+    model: str = Form("claude-sonnet-4-20250514"),
     current_user: CurrentUser = Depends(perm_cv_upload),
 ):
     """
@@ -836,6 +893,10 @@ async def create_batch(
             file_type=ext.lstrip("."),
             file_size=os.path.getsize(tmp_path),
             extraction_mode=extraction_mode,
+            api_key=api_key,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            model=model,
         )
         jobs.append(job)
 
@@ -1229,9 +1290,9 @@ async def process_cv_legacy(
 
 # ── Legacy import compatibility ────────────────────────────────
 # Keep these accessible for backward compat
-EXTRACTION_PROMPT = """You are a CV/Resume parser. Extract structured information from the following CV text and return ONLY valid JSON.
+EXTRACTION_PROMPT = """You are a CV/Resume parser for Navigos Search. Extract structured information and STRICTLY follow the format rules below. Return ONLY valid JSON.
 
-The JSON must have this exact structure:
+## JSON SCHEMA (MUST FOLLOW EXACTLY)
 {
   "full_name": "string or empty",
   "gender": "string or empty",
@@ -1240,17 +1301,17 @@ The JSON must have this exact structure:
   "address": "string or empty",
   "career_summary": [
     {
-      "period": "MM/YYYY – MM/YYYY or Present",
-      "company": "COMPANY NAME IN UPPERCASE",
-      "company_description": "Brief company description if available, or empty string",
+      "period": "MM/YYYY - MM/YYYY or MM/YYYY - Present",
+      "company": "COMPANY NAME IN UPPERCASE (e.g. ABC CORPORATION)",
+      "company_description": "Brief company description or empty string",
       "positions": [
         {
-          "period": "MM/YYYY – MM/YYYY (if different sub-period, otherwise empty)",
-          "title": "Job Title",
-          "report_to": "reporting line if mentioned, or empty",
-          "section_label": "e.g. 'Accountability:' or 'Duties:' if mentioned, or empty",
+          "period": "MM/YYYY - MM/YYYY (if sub-period differs from company level, otherwise empty)",
+          "title": "Job Title in Title Case (NOT UPPERCASE. e.g. Senior Software Engineer)",
+          "report_to": "reporting line or empty",
+          "section_label": "short label like 'Responsibilities:' or 'Duties:' or empty",
           "responsibilities": ["bullet point 1", "bullet point 2"],
-          "achievements_label": "e.g. 'Achievements:' if mentioned, or empty",
+          "achievements_label": "Achievements: or empty",
           "achievements": ["achievement 1", "achievement 2"]
         }
       ]
@@ -1271,12 +1332,59 @@ The JSON must have this exact structure:
   ]
 }
 
-IMPORTANT RULES:
+## STRICT FORMAT RULES (VIOLATIONS WILL CAUSE VALIDATION ERRORS)
+
+### Rule 1: OUTPUT FILENAME FORMAT
+The calling system will name the output file as: CLIENT - POSITION - CANDIDATE_NAME
+- CLIENT: MUST be ALL UPPERCASE (e.g. NAVIGOS, ABC CORP)
+- POSITION: Job title (e.g. Software Engineer)
+- CANDIDATE_NAME: Full name of person
+Example: "NAVIGOS - Senior Software Engineer - Nguyen Van A"
+- BAD: "Navigos" (client not uppercase)
+
+### Rule 2: BRAND SECTION NAME (CRITICAL)
+The section for "Assessment" MUST use the EXACT brand name:
+REQUIRED: "Navigos Search's Assessment"
+NEVER use: "Assessment", "Navigos Assessment", "Đánh giá", "NAVIGOS ASSESSMENT"
+
+### Rule 3: WORKING EXPERIENCE STRUCTURE (H1/H2/H3)
+Use THREE levels of headings:
+
+H1 (Heading 1) = Company level: "TIME + COMPANY NAME (UPPERCASE)"
+  Example: "2020 - Present | ABC CORPORATION"
+  - Must have: period, company (UPPERCASE)
+
+H2 (Heading 2) = Position level: "TIME + JOB TITLE (Title Case)"
+  Example: "2022 - Present | Senior Software Engineer"
+  - Must have: title (Title Case, NOT UPPERCASE)
+  - Period if different from company level
+
+H3 (Heading 3) = Position title only (only when sub-periods within same position)
+  Example: "Tech Lead"
+
+NEVER put everything under one company without splitting positions.
+NEVER put everything in bullets without position titles.
+
+### Rule 4: STYLE SYSTEM
+- Style 3 (Description): Company description, job descriptions — free text
+- Style 2 (Subject): "Responsibilities", "Achievements" — SHORT LABELS + bullet list
+
+### Rule 5: TOC (Table of Contents)
+TOC is auto-generated from H1 + H2 + H3 headings.
+- At least one position per company is required for TOC to have entries
+- Do NOT put all responsibilities under one company blob
+
+### Rule 6: DO NOT INVENT DATA
+- If a field is not in the CV, use empty string "" or empty array []
+- Do NOT assume or fabricate company names, dates, or titles
+- Company names MUST be in UPPERCASE
+- Position titles MUST be in Title Case (NOT UPPERCASE)
+
+## EXTRACTION RULES
 - Extract ALL work experiences, education, and other sections
-- Keep the original language of the CV content (do not translate)
-- Company names should be in UPPERCASE
+- Keep the original language (Vietnamese or English) — do not translate
 - If information is not available, use empty string ""
-- Do NOT invent or assume information that is not in the CV
+- Split each job into separate positions if the person had multiple roles at the same company
 
 CV TEXT:
 """
@@ -1394,9 +1502,20 @@ def extract_with_claude(cv_text: str, api_key: str, model: str) -> dict:
 def extract_with_openai(cv_text: str, api_key: str, model: str) -> dict:
     import openai as _openai
     client = _openai.OpenAI(api_key=api_key)
-    resp = client.chat.completions.create(model=model, max_tokens=8000, temperature=0.1,
-        messages=[{"role": "user", "content": EXTRACTION_PROMPT + cv_text}])
-    return _parse_json_response(resp.choices[0].message.content or "")
+    try:
+        resp = client.chat.completions.create(model=model, max_tokens=8000, temperature=0.1,
+            messages=[{"role": "user", "content": EXTRACTION_PROMPT + cv_text}])
+        return _parse_json_response(resp.choices[0].message.content or "")
+    except Exception as e:
+        err = str(e).lower()
+        # Raise a ValueError with actionable message so callers can catch it
+        if "credit" in err or "quota" in err or "exceeded" in err or "billing" in err:
+            raise ValueError(f"OpenAI: Hết credit/quota (402/429). Nạp tiền tại platform.openai.com")
+        if "invalid" in err or "auth" in err or "incorrect api key" in err:
+            raise ValueError(f"OpenAI: API key không hợp lệ (401). Kiểm tra lại key trong Settings")
+        if "429" in str(e):
+            raise ValueError(f"OpenAI: Rate limit (429). Thử lại sau vài phút hoặc đợi quota reset")
+        raise ValueError(f"OpenAI: {e}")
 
 def extract_with_ollama(cv_text: str, model: str = "qwen2.5:14b") -> dict:
     import urllib.request, urllib.error

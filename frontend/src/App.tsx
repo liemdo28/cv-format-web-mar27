@@ -612,6 +612,26 @@ export default function App() {
 
     const isOfflineMode = settings.extractionMode === 'offline'
 
+    // ── Step 0: Backend connectivity check (ALL modes) ──────────
+    addLog(`Checking backend: ${settings.backendUrl}...`)
+    try {
+      await axios.get(`${settings.backendUrl}/health`, { timeout: 5000 })
+      addLog(`Backend: OK`)
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        if (!err.response) {
+          addLog(`Backend: X Backend khong chap nhan. Kiem tra: 1) Dang chay?  2) Dia chi dung?  3) Firewall?`)
+          showToast(`Backend khong chap nhan tu ${settings.backendUrl}`)
+          return
+        }
+        addLog(`Backend: ${err.response.status} ${err.response.statusText}`)
+      } else {
+        addLog(`Backend: X Loi ket noi — ${(err as Error).message}`)
+        showToast(`Khong ket noi duoc backend tai ${settings.backendUrl}`)
+        return
+      }
+    }
+
     let providerStatus: Record<string, string> = {}
     let hasClaude = false
     let hasOpenAI = false
@@ -772,12 +792,21 @@ export default function App() {
 
       } catch (err: unknown) {
         let msg = 'Unknown error'
+
         if (axios.isAxiosError(err)) {
+          const status = err.response?.status
           const data = err.response?.data
-          if (typeof data?.detail === 'string') {
+          // Backend unreachable (network-level failure)
+          if (err.code === 'ERR_NETWORK' || err.code === 'ECONNREFUSED' ||
+              err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT' ||
+              (!status && !err.response)) {
+            msg = `Backend khong chap nhan tu ${settings.backendUrl}. Kiem tra: 1) Backend dang chay? 2) Dia chi dung?`
+          } else if (typeof data?.detail === 'string') {
             msg = data.detail
           } else if (typeof data?.detail === 'object') {
             msg = JSON.stringify(data.detail)
+          } else if (status) {
+            msg = `${status} ${err.response?.statusText || 'Error'}`
           } else {
             msg = err.message
           }
@@ -788,12 +817,15 @@ export default function App() {
         // Extract provider error for display
         const providerErrors = msg.split(' | ')
         const shortMsgs = providerErrors.map(e => {
-          if (e.includes('credit balance')) return 'Claude: hết credit'
-          if (e.includes('Incorrect API key') || e.includes('invalid_api_key')) return 'OpenAI: API key sai'
-          if (e.includes('401')) return 'OpenAI: key không hợp lệ'
-          if (e.includes('Connection refused') || e.includes('Ollama unavailable')) return 'Ollama: chưa chạy'
-          if (e.includes('500') || e.includes('502') || e.includes('503')) return 'Server đang bận, thử lại'
-          return e.substring(0, 60)
+          if (e.includes('credit balance') || e.includes('het credit') || e.includes('no_credit')) return 'Claude: het credit'
+          if (e.includes('Incorrect API key') || e.includes('invalid_api_key') || e.includes('invalid_key')) return 'OpenAI: API key sai'
+          if (e.includes('401')) return 'Provider: key khong hop le (401)'
+          if (e.includes('402')) return 'Provider: het credit/thanh toan (402)'
+          if (e.includes('429')) return 'Provider: rate limit (429)'
+          if (e.includes('Connection refused') || e.includes('Ollama unavailable')) return 'Ollama: chua chay'
+          if (e.includes('500') || e.includes('502') || e.includes('503')) return 'Server dang ban, thu lai'
+          if (e.includes('Backend khong chap nhan')) return e  // Keep full backend-down message
+          return e.substring(0, 120)
         })
         const shortMsg = shortMsgs.join(' | ')
 

@@ -45,6 +45,10 @@ class BatchJob:
     file_path: str = ""   # Temp path to uploaded file (optional for tests)
     status: str = JobStatus.QUEUED
     extraction_mode: str = "auto"
+    api_key: str = ""     # Claude API key (passed from frontend settings)
+    openai_api_key: str = ""  # OpenAI API key (passed from frontend settings)
+    openai_model: str = "gpt-4o-mini"
+    model: str = "claude-sonnet-4-20250514"
     progress: float = 0.0  # 0.0 - 1.0
     message: str = ""
     result: dict | None = None
@@ -255,11 +259,11 @@ class BatchProcessor:
 
             cv_data = proc["extract_cv_data"](
                 cv_text=cv_text,
-                api_key="",
-                model="claude-sonnet-4-20250514",
+                api_key=job.api_key,
+                model=job.model,
                 mode=job.extraction_mode,
-                openai_key="",
-                openai_model="gpt-4o-mini",
+                openai_key=job.openai_api_key,
+                openai_model=job.openai_model,
             )
 
             job.status = JobStatus.PARSED

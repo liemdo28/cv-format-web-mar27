@@ -463,7 +463,8 @@ def validate_duplicate_entries(
 
 # ── Full CV validator ─────────────────────────────────────────────
 
-def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> ValidationResult:
+def validate_cv_data(cv_data: dict[str, Any], strict: bool = False,
+                    output_filename: str = "") -> ValidationResult:
     """
     Validate a full parsed CV data object.
 
@@ -474,6 +475,32 @@ def validate_cv_data(cv_data: dict[str, Any], strict: bool = False) -> Validatio
     errors: list[ValidationError] = []
     warnings: list[ValidationError] = []
     info: list[ValidationError] = []
+
+    # 0. BA Rules: Output Filename validation (Rule 1)
+    if output_filename:
+        err = validate_output_filename(output_filename)
+        if err:
+            errors.append(err)
+
+    # 0b. BA Rules: Section title branding (Rule 2)
+    errs_sections = validate_section_titles(cv_data.get("other_info") or [])
+    errors.extend(errs_sections)
+
+    # 0c. BA Rules: Working Experience H1/H2/H3 structure (Rule 3)
+    errs_exp = validate_working_experience_structure(cv_data.get("career_summary") or [])
+    errors.extend(errs_exp)
+
+    # 0d. BA Rules: Style mapping validation (Rule 4)
+    errs_style = validate_style_mapping(cv_data)
+    for e in errs_style:
+        if e.severity == ValidationSeverity.ERROR:
+            errors.append(e)
+        else:
+            warnings.append(e)
+
+    # 0e. BA Rules: TOC presence validation (Rule 5)
+    errs_toc = validate_toc_present(cv_data)
+    errors.extend(errs_toc)
 
     # 1. Required top-level fields
     REQUIRED_FIELDS = [
@@ -717,7 +744,416 @@ def validate_batch(cv_data_list: list[dict[str, Any]]) -> list[ValidationResult]
     return [validate_cv_data(cv) for cv in cv_data_list]
 
 
-# ── Sanitization helpers ─────────────────────────────────────────
+# ── BRANDING / CONSTANTS ─────────────────────────────────────────
+NAVIGOS_SEARCH_ASSESSMENT = "Navigos Search\u2019s Assessment"
+NAVIGOS_SEARCH_ASSESSMENT_UPPER = "NAVIGOS SEARCH\u2019S ASSESSMENT"
+OUTPUT_FILENAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9 ]+( [A-Z][A-Z0-9 ]+)* - .+ - .+$")
+
+
+# ── OUTPUT FILENAME VALIDATION (Rule 1) ──────────────────────────
+def validate_output_filename(filename: str) -> ValidationError | None:
+    """
+    Validate output filename format.
+    Required format: CLIENT_UPPER - Position - CandidateName
+
+    Valid:   "NAVIGOS - Developer - John Doe"
+    Invalid: "Navigos - Developer - John"   (client not uppercase)
+    Invalid: "NAVIGOS - John"               (only 2 parts)
+    Invalid: "Developer - John Doe"         (missing client)
+    """
+    if not filename or not filename.strip():
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_REQUIRED",
+            message="Output filename không được để trống",
+            severity=ValidationSeverity.ERROR,
+            suggestion="Đặt tên: CLIENT - Vị trí - Tên ứng viên  (CLIENT phải IN HOA)",
+        )
+
+    parts = [p.strip() for p in filename.split(" - ")]
+    if len(parts) != 3:
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_FORMAT_WRONG",
+            message=f"Filename phải có đúng 3 phần: CLIENT - Position - Name (đang có {len(parts)} phần: '{filename}')",
+            severity=ValidationSeverity.ERROR,
+            value=filename,
+            suggestion="Format: CLIENT_IN_HOA - Vị trí - Tên ứng viên  (ví dụ: NAVIGOS - Software Engineer - Nguyen Van A)",
+        )
+
+    client, position, candidate = parts[0], parts[1], parts[2]
+
+    # Rule: CLIENT must be all uppercase (allowing letters, numbers, spaces)
+    if client != client.upper():
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_CLIENT_NOT_UPPERCASE",
+            message=f"Tên CLIENT phải IN HOA toàn bộ: '{client}' → '{client.upper()}'",
+            severity=ValidationSeverity.ERROR,
+            value=filename,
+            suggestion=f"Sửa: '{client.upper()} - {position} - {candidate}'",
+        )
+
+    if not position.strip():
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_POSITION_EMPTY",
+            message="Phần Position không được trống",
+            severity=ValidationSeverity.ERROR,
+            value=filename,
+            suggestion="Format: CLIENT - Vị trí - Tên  (ví dụ: NAVIGOS - Software Engineer - Nguyen Van A)",
+        )
+
+    if not candidate.strip():
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_CANDIDATE_EMPTY",
+            message="Phần Tên ứng viên không được trống",
+            severity=ValidationSeverity.ERROR,
+            value=filename,
+            suggestion="Format: CLIENT - Vị trí - Tên  (ví dụ: NAVIGOS - Software Engineer - Nguyen Van A)",
+        )
+
+    # Warn about potential issues
+    if " " not in position and len(position) > 3:
+        return ValidationError(
+            field="output_filename",
+            code="FILENAME_POSITION_SUGGESTION",
+            message=f"Position có thể chưa đúng: '{position}'",
+            severity=ValidationSeverity.WARNING,
+            value=filename,
+            suggestion="Position nên là tên job title đầy đủ (ví dụ: 'Senior Software Engineer')",
+        )
+
+    return None
+
+
+# ── SECTION TITLE VALIDATION (Rule 2) ───────────────────────────
+def validate_section_titles(other_info: list) -> list[ValidationError]:
+    """
+    Validate that Section II / Assessment uses the EXACT brand name.
+    Dev must NOT use: "Assessment", "Navigos Assessment", "Đánh giá", etc.
+    Required: "Navigos Search's Assessment"
+    """
+    errors = []
+    for i, section in enumerate(other_info):
+        section_title = (section.get("section_title") or "").strip()
+        if not section_title:
+            continue
+        # Normalize for comparison (strip extra spaces)
+        norm = re.sub(r"\s+", " ", section_title)
+
+        if norm.upper() in ("ASSESSMENT", "NAVIGOS ASSESSMENT",
+                             "NAVIGOS'S ASSESSMENT",
+                             "NAVIGOS SEARCH ASSESSMENT",
+                             "DANH GIA", "ĐÁNH GIÁ"):
+            errors.append(ValidationError(
+                field=f"other_info[{i}].section_title",
+                code="SECTION_TITLE_WRONG_BRAND",
+                message=(
+                    f"Section title SAI: '{section_title}'  "
+                    f"→ Phải là đúng: '{NAVIGOS_SEARCH_ASSESSMENT}'"
+                ),
+                severity=ValidationSeverity.ERROR,
+                value=section_title,
+                suggestion=f"Sửa section title thành: '{NAVIGOS_SEARCH_ASSESSMENT}'  "
+                           f"(chữ 's' sau Search có dấu nháy đơn)",
+            ))
+        # Also catch the uppercase version (AI sometimes outputs all caps)
+        if norm == NAVIGOS_SEARCH_ASSESSMENT_UPPER:
+            errors.append(ValidationError(
+                field=f"other_info[{i}].section_title",
+                code="SECTION_TITLE_WRONG_BRAND",
+                message=(
+                    f"Section title phải đúng: '{section_title}'  "
+                    f"→ Viết HOA nhưng phải có dấu nháy: '{NAVIGOS_SEARCH_ASSESSMENT}'"
+                ),
+                severity=ValidationSeverity.ERROR,
+                value=section_title,
+                suggestion=f"Đúng: '{NAVIGOS_SEARCH_ASSESSMENT}'  "
+                           f"(không phải: '{NAVIGOS_SEARCH_ASSESSMENT_UPPER}')",
+            ))
+    return errors
+
+
+# ── WORKING EXPERIENCE STRUCTURE VALIDATION (Rule 3) ─────────────
+def validate_working_experience_structure(career_summary: list) -> list[ValidationError]:
+    """
+    Validate H1/H2/H3 heading structure for Working Experience.
+
+    H1 = Heading 1: "Time + Company"        (e.g. "2020 - Present | ABC CORP")
+    H2 = Heading 2: "Time + Position"       (e.g. "2022 - Present | Senior Developer")
+    H3 = Heading 3: "Position title only"   (only when position spans sub-periods)
+
+    Rules:
+    - career_summary entry must have: company (UPPERCASE), period
+    - Each position must have: title (Title Case, NOT UPPERCASE)
+    - Period format: MM/YYYY – MM/YYYY or MM/YYYY – Present
+    - Company must be UPPERCASE
+    """
+    errors = []
+    warnings = []
+
+    if not career_summary:
+        return errors
+
+    for i, job in enumerate(career_summary):
+        job_path = f"career_summary[{i}]"
+        company = (job.get("company") or "").strip()
+        period = (job.get("period") or "").strip()
+
+        # H1: Company must exist and be UPPERCASE
+        if not company:
+            errors.append(ValidationError(
+                field=f"{job_path}.company",
+                code="H1_COMPANY_MISSING",
+                message=f"[H1] Job #{i+1}: Thiếu tên công ty (Heading 1)",
+                severity=ValidationSeverity.ERROR,
+                suggestion="Thêm tên công ty và VIẾT HOA (ví dụ: ABC CORPORATION)",
+            ))
+        elif company != company.upper():
+            errors.append(ValidationError(
+                field=f"{job_path}.company",
+                code="H1_COMPANY_NOT_UPPERCASE",
+                message=f"[H1] Tên công ty phải VIẾT HOA: '{company}'",
+                severity=ValidationSeverity.ERROR,
+                value=company,
+                suggestion=f"Viết HOA: '{company.upper()}'",
+            ))
+
+        # H1: Period must exist at job level
+        if not period:
+            errors.append(ValidationError(
+                field=f"{job_path}.period",
+                code="H1_PERIOD_MISSING",
+                message=f"[H1] Job #{i+1}: Thiếu thời gian làm việc (Heading 1 period)",
+                severity=ValidationSeverity.ERROR,
+                suggestion="Thêm period: MM/YYYY - MM/YYYY  (ví dụ: 2020 - Present)",
+            ))
+
+        positions = job.get("positions") or []
+        if not positions:
+            resp = job.get("responsibilities") or ""
+            if isinstance(resp, list) and len(resp) < 2:
+                warnings.append(ValidationError(
+                    field=f"{job_path}.positions",
+                    code="H2_NO_POSITIONS",
+                    message=f"[H2] Job #{i+1}: Không có positions — nên tách thành từng chức danh riêng",
+                    severity=ValidationSeverity.WARNING,
+                    suggestion="Tách thành từng position với title riêng (Senior Developer, Lead Engineer...)",
+                ))
+            continue
+
+        for j, pos in enumerate(positions):
+            pos_path = f"{job_path}.positions[{j}]"
+            pos_title = (pos.get("title") or "").strip()
+
+            # H2/H3: Title must exist and NOT be all uppercase
+            if not pos_title:
+                errors.append(ValidationError(
+                    field=f"{pos_path}.title",
+                    code="H2_TITLE_MISSING",
+                    message=f"[H2] Job #{i+1}, Position #{j+1}: Thiếu chức danh",
+                    severity=ValidationSeverity.ERROR,
+                    suggestion="Thêm title: ví dụ 'Senior Software Engineer'  (dùng Title Case, KHÔNG VIẾT HOA)",
+                ))
+            elif pos_title == pos_title.upper() and len(pos_title) > 3:
+                warnings.append(ValidationError(
+                    field=f"{pos_path}.title",
+                    code="H2_TITLE_ALL_CAPS",
+                    message=f"[H2] Position title viết HOA: '{pos_title}' — nên dùng Title Case",
+                    severity=ValidationSeverity.WARNING,
+                    value=pos_title,
+                    suggestion=f"Dùng Title Case: '{pos_title.title()}'",
+                ))
+
+            responsibilities = pos.get("responsibilities") or []
+            if isinstance(responsibilities, list) and len(responsibilities) > 8 and not pos_title:
+                warnings.append(ValidationError(
+                    field=f"{pos_path}.responsibilities",
+                    code="H2_RESPONSIBILITIES_NO_TITLE",
+                    message=f"[H2] Job #{i+1}, Position #{j+1}: Quá nhiều bullets nhưng không có title — "
+                            f"có thể AI nhét hết vào 1 position",
+                    severity=ValidationSeverity.WARNING,
+                    suggestion="Chia thành nhiều positions với title riêng: "
+                              f"'Software Engineer', 'Senior Engineer', 'Tech Lead'...",
+                ))
+
+            pos_period = (pos.get("period") or "").strip()
+            if pos_period:
+                err = validate_date_format(pos_period, f"{pos_path}.period")
+                if err:
+                    err.field = f"{pos_path}.period"
+                    warnings.append(err)
+
+    return errors
+
+
+# ── STYLE-BASED VALIDATION (Rule 4) ─────────────────────────────
+def validate_style_mapping(cv_data: dict) -> list[ValidationError]:
+    """
+    Validate that parsed data will map correctly to DOCX styles.
+
+    Style 3 (Description) = company + job descriptions (free text)
+    Style 2 (Subject)     = "Responsibilities", "Achievements" labels
+
+    Validates:
+    - other_info sections have proper section_title vs items separation
+    - responsibilities are in list/bullet form (not one giant paragraph)
+    - subject labels are consistent
+    """
+    errors = []
+    warnings = []
+
+    career = cv_data.get("career_summary") or []
+    for i, job in enumerate(career):
+        positions = job.get("positions") or []
+        for j, pos in enumerate(positions):
+            pos_path = f"career_summary[{i}].positions[{j}]"
+            responsibilities = pos.get("responsibilities") or []
+            achievements = pos.get("achievements") or []
+
+            # Style 2: subject labels must be consistent
+            if isinstance(responsibilities, str) and len(responsibilities) > 200:
+                warnings.append(ValidationError(
+                    field=f"{pos_path}.responsibilities",
+                    code="STYLE2_LONG_PLAINTEXT",
+                    message=f"[Style 2] Responsibilities là 1 đoạn văn dài ({len(responsibilities)} chars) — "
+                            f"nên tách thành bullet points riêng",
+                    severity=ValidationSeverity.WARNING,
+                    suggestion="Tách responsibilities thành: ['- Led team of 5', '- Built REST APIs', ...]  "
+                              f"(mỗi bullet 1 dòng ngắn)",
+                ))
+
+            if isinstance(achievements, str) and len(achievements) > 200:
+                warnings.append(ValidationError(
+                    field=f"{pos_path}.achievements",
+                    code="STYLE2_ACHIEVEMENTS_LONG",
+                    message=f"[Style 2] Achievements là 1 đoạn văn dài ({len(achievements)} chars)",
+                    severity=ValidationSeverity.WARNING,
+                    suggestion="Tách achievements thành bullet points riêng",
+                ))
+
+            if responsibilities and not isinstance(responsibilities, list):
+                warnings.append(ValidationError(
+                    field=f"{pos_path}.responsibilities",
+                    code="STYLE2_RESPONSIBILITIES_NOT_LIST",
+                    message=f"[Style 2] Responsibilities phải là LIST (array), không phải text blob",
+                    severity=ValidationSeverity.WARNING,
+                    value=f"type={type(responsibilities).__name__}",
+                    suggestion="Đổi responsibilities thành: ['- Task 1', '- Task 2', ...]",
+                ))
+
+    other_info = cv_data.get("other_info") or []
+    for i, section in enumerate(other_info):
+        section_label = (section.get("section_label") or "").strip()
+        if section_label and len(section_label) > 40:
+            warnings.append(ValidationError(
+                field=f"other_info[{i}].section_label",
+                code="STYLE2_SECTION_LABEL_TOO_LONG",
+                message=f"[Style 2] Section label quá dài ({len(section_label)} chars): '{section_label}'",
+                severity=ValidationSeverity.WARNING,
+                suggestion="Section label nên ngắn gọn: 'Responsibilities:', 'Achievements:', 'Duties:'",
+            ))
+
+    return errors + warnings
+
+
+# ── TOC VALIDATION (Rule 5) ─────────────────────────────────────
+def validate_toc_present(cv_data: dict) -> list[ValidationError]:
+    """
+    Validate TOC / Table of Contents is present and synced with content.
+
+    TOC entries come from career_summary positions.
+    If career_summary has positions but TOC would be empty → warning.
+    """
+    errors = []
+    career = cv_data.get("career_summary") or []
+    positions_count = sum(len(job.get("positions") or []) for job in career)
+
+    if career and positions_count == 0:
+        errors.append(ValidationError(
+            field="career_summary",
+            code="TOC_ENTRIES_ZERO",
+            message="TOC sẽ trống — career_summary có job nhưng không có positions (H2/H3 headings)",
+            severity=ValidationSeverity.ERROR,
+            suggestion="Thêm positions (H2: chức danh) để TOC có nội dung",
+        ))
+
+    return errors
+
+
+# ── ERROR LOGGING SYSTEM (Rule 7) ────────────────────────────────
+class CVErrorLog:
+    """
+    Structured error log for a CV processing run.
+    Tracks errors by category for QA and BA reporting.
+    """
+    def __init__(self):
+        self.filename_errors: list[str] = []
+        self.heading_errors: list[str] = []
+        self.style_errors: list[str] = []
+        self.toc_errors: list[str] = []
+        self.structure_errors: list[str] = []
+        self.ai_errors: list[str] = []
+        self.total_errors: int = 0
+        self.total_warnings: int = 0
+
+    def add_error(self, category: str, message: str):
+        attr_map = {
+            "filename": "filename_errors",
+            "heading": "heading_errors",
+            "style": "style_errors",
+            "toc": "toc_errors",
+            "structure": "structure_errors",
+            "ai": "ai_errors",
+        }
+        attr = attr_map.get(category, "structure_errors")
+        getattr(self, attr).append(message)
+        self.total_errors += 1
+
+    def add_warning(self, category: str, message: str):
+        attr_map = {
+            "filename": "filename_errors",
+            "heading": "heading_errors",
+            "style": "style_errors",
+            "toc": "toc_errors",
+            "structure": "structure_errors",
+            "ai": "ai_errors",
+        }
+        attr = attr_map.get(category, "structure_errors")
+        getattr(self, attr).append(f"[WARN] {message}")
+        self.total_warnings += 1
+
+    def to_dict(self) -> dict:
+        return {
+            "filename_errors": self.filename_errors,
+            "heading_errors": self.heading_errors,
+            "style_errors": self.style_errors,
+            "toc_errors": self.toc_errors,
+            "structure_errors": self.structure_errors,
+            "ai_errors": self.ai_errors,
+            "total_errors": self.total_errors,
+            "total_warnings": self.total_warnings,
+            "has_critical_errors": bool(self.filename_errors or self.heading_errors),
+        }
+
+    def summary(self) -> str:
+        parts = []
+        if self.filename_errors:
+            parts.append(f"Filename: {len(self.filename_errors)}")
+        if self.heading_errors:
+            parts.append(f"Headings: {len(self.heading_errors)}")
+        if self.style_errors:
+            parts.append(f"Styles: {len(self.style_errors)}")
+        if self.toc_errors:
+            parts.append(f"TOC: {len(self.toc_errors)}")
+        if self.structure_errors:
+            parts.append(f"Structure: {len(self.structure_errors)}")
+        return ", ".join(parts) if parts else "All clear"
+
+
+# ── Sanitization helpers ──────────────────────────────────────────
 
 def sanitize_for_export(cv_data: dict[str, Any]) -> dict[str, Any]:
     """Clean up data before template fill."""
