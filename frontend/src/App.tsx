@@ -632,7 +632,7 @@ export default function App() {
       }
       const healthRes = await axios.get(`${settings.backendUrl}/health`, {
         params: healthParams,
-        timeout: isOfflineMode ? 5000 : 15000,
+        timeout: 30000,  // Render free tier cold start can take ~30s
       })
       addLog(`Backend: OK`)
       providerStatus = healthRes.data

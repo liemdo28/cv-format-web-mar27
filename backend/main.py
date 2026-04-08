@@ -48,13 +48,32 @@ from batch import (
 app = FastAPI(title="CV Format Tool API", version="2.1.0")
 
 # ── CORS: Allow all origins for public testing ───────────────────
+# Note: allow_credentials=True with allow_origins=["*"] requires Starlette
+# to echo back the requesting origin. We also add an explicit OPTIONS handler
+# as a fallback in case the middleware doesn't cover all paths.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
+    """Explicit CORS preflight handler as fallback."""
+    origin = request.headers.get("origin", "*")
+    return JSONResponse(
+        content={"ok": True},
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "600",
+        },
+    )
 
 # ── PUBLIC MODE: bypass all auth for team testing ────────────────
 # All endpoints are accessible without login.
