@@ -268,9 +268,12 @@ axios.interceptors.response.use(
       !orig.url?.includes('/auth/')
     ) {
       orig._retry = true
+      const auth = loadAuth()
+      // Public mode has no refresh token — skip token refresh to avoid infinite reload loop
+      if (!auth.refreshToken) {
+        return Promise.reject(err)
+      }
       try {
-        const auth = loadAuth()
-        if (!auth.refreshToken) throw new Error('No refresh token')
         const refreshRes = await axios.post<{ access_token: string }>(
           `${DEFAULT_SETTINGS.backendUrl}/auth/refresh`,
           { refresh_token: auth.refreshToken },
@@ -387,7 +390,9 @@ export default function App() {
       return
     }
 
-    const res = await fetch(url)
+    const fetchHeaders: Record<string, string> = {}
+    if (auth.accessToken) fetchHeaders['Authorization'] = `Bearer ${auth.accessToken}`
+    const res = await fetch(url, { headers: fetchHeaders })
     if (!res.ok) throw new Error(`Download failed: ${res.status}`)
     const blob = await res.blob()
     const objectUrl = URL.createObjectURL(blob)
@@ -612,11 +617,25 @@ export default function App() {
 
     const isOfflineMode = settings.extractionMode === 'offline'
 
-    // ── Step 0: Backend connectivity check (ALL modes) ──────────
+    // ── Step 0: Backend connectivity + provider check (single call) ──
     addLog(`Checking backend: ${settings.backendUrl}...`)
+    let providerStatus: Record<string, string> = {}
+    let hasClaude = false
+    let hasOpenAI = false
+    let hasOllama = false
+
     try {
-      await axios.get(`${settings.backendUrl}/health`, { timeout: 5000 })
+      const healthParams: Record<string, string> = {}
+      if (!isOfflineMode) {
+        if (settings.apiKey) healthParams.api_key = settings.apiKey
+        if (settings.openaiApiKey) healthParams.openai_api_key = settings.openaiApiKey
+      }
+      const healthRes = await axios.get(`${settings.backendUrl}/health`, {
+        params: healthParams,
+        timeout: isOfflineMode ? 5000 : 15000,
+      })
       addLog(`Backend: OK`)
+      providerStatus = healthRes.data
     } catch (err) {
       if (axios.isAxiosError(err)) {
         if (!err.response) {
@@ -632,37 +651,19 @@ export default function App() {
       }
     }
 
-    let providerStatus: Record<string, string> = {}
-    let hasClaude = false
-    let hasOpenAI = false
-    let hasOllama = false
-
     if (!isOfflineMode) {
-      // Pre-flight check: which providers are available?
-      addLog('Checking AI providers...')
-      try {
-        const res = await axios.get(`${settings.backendUrl}/health`, {
-          params: {
-            api_key: settings.apiKey,
-            openai_api_key: settings.openaiApiKey,
-          },
-          timeout: 15000,
-        })
-        providerStatus = res.data
-        const providerKeys = ['claude', 'openai', 'ollama']
-        for (const [provider, status] of Object.entries(providerStatus)) {
-          if (!providerKeys.includes(provider) && typeof status !== 'string') continue
-          const icons: Record<string, string> = {
-            ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
-            quota_exceeded: '⚠️', error: '❌'
-          }
-          const icon = icons[status as string] ?? '❓'
-          if (providerKeys.includes(provider)) {
-            addLog(`  ${provider}: ${icon} ${status}`)
-          }
+      // Parse provider status from health response
+      const providerKeys = ['claude', 'openai', 'ollama']
+      for (const [provider, status] of Object.entries(providerStatus)) {
+        if (!providerKeys.includes(provider) && typeof status !== 'string') continue
+        const icons: Record<string, string> = {
+          ok: '✅', unavailable: '❌', no_credit: '⚠️', invalid_key: '❌',
+          quota_exceeded: '⚠️', error: '❌'
         }
-      } catch {
-        addLog('  (health check failed, proceeding anyway)')
+        const icon = icons[status as string] ?? '❓'
+        if (providerKeys.includes(provider)) {
+          addLog(`  ${provider}: ${icon} ${status}`)
+        }
       }
 
       // Check provider status from health response (if backend supports it)
@@ -724,11 +725,13 @@ export default function App() {
 
         // Try /jobs first (new workflow with DB + review), fall back to /process (legacy)
         let res: import('axios').AxiosResponse<ProcessResult>
+        const uploadHeaders: Record<string, string> = { 'Content-Type': 'multipart/form-data' }
+        if (auth.accessToken) uploadHeaders['Authorization'] = `Bearer ${auth.accessToken}`
         try {
           res = await axios.post<ProcessResult>(
             `${settings.backendUrl}/jobs`,
             formData,
-            { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
+            { headers: uploadHeaders, timeout: 300_000 }
           )
         } catch (jobErr) {
           if (axios.isAxiosError(jobErr) && jobErr.response?.status === 404) {
@@ -743,7 +746,7 @@ export default function App() {
             res = await axios.post<ProcessResult>(
               `${settings.backendUrl}/process`,
               fallbackForm,
-              { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 }
+              { headers: uploadHeaders, timeout: 300_000 }
             )
           } else {
             throw jobErr

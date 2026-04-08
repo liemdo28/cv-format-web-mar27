@@ -592,7 +592,7 @@ async def review_job(
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        if job.status not in ("review", "parsed", "validated"):
+        if job.status not in ("review", "parsed", "validated", "qc", "approved", "exported"):
             raise HTTPException(status_code=400, detail=f"Cannot review job in status: {job.status}")
 
         # Get next version number
@@ -695,11 +695,14 @@ async def qc_job(
         }
 
 
+class ExportRequest(BaseModel):
+    client_name: str = "CLIENT"
+    position: str = "POSITION"
+
 @app.post("/jobs/{job_id}/export", tags=["jobs"])
 async def export_job(
     job_id: str,
-    client_name: str = Form("CLIENT"),
-    position: str = Form("POSITION"),
+    payload: ExportRequest = ExportRequest(),
     current_user: CurrentUser = Depends(perm_cv_export),
     request: Request = None,
 ):
@@ -731,6 +734,8 @@ async def export_job(
 
         # Build output filename for validation (BA Rule 1)
         full_name = cv_data.get("full_name", "") or "Candidate"
+        client_name = payload.client_name
+        position = payload.position
         output_filename = f"{client_name.upper()} - {position} - {full_name}"
 
         # Run FULL validation including BA rules
